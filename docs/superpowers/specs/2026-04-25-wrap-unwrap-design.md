@@ -241,30 +241,77 @@ All snippets below are literal `package.json` entries.
 
 `wrap(text, { width })`:
 
-1. Split into roles using the same classifier as Unwrap (see §"Line classifier"). This is so we know which regions are reflow-safe (`prose`, `list-item`, `blockquote` content) vs. preserve-as-is (`fence-boundary`, `in-fence`, `indented-code`, `heading-atx`, `heading-setext`, `hr`, `table-row`, `html-block`, `link-ref-def`).
-2. For each reflow-safe region, collect its content into one logical line, then re-wrap at `width` columns using a greedy word-fill that:
-   - Tokenizes the line preserving inline code spans (`` `…` ``) and inline links (`[text](url)`) as atomic — never broken across lines.
-   - Breaks on whitespace.
-   - Re-emits the appropriate prefix (list marker hang indent, blockquote `> ` chain) on each output line.
-3. For preserve-as-is regions, emit lines verbatim.
+1. Split into roles using the same classifier as Unwrap (see §"Line classifier"). This identifies reflow-safe inner roles (`prose`, `list-item`) — which may sit under any blockquote prefix stack — vs. preserve-as-is inner roles (`fence-boundary`, `in-fence`, `indented-code`, `heading-atx`, `heading-setext`, `hr`, `table-row`, `html-block`, `link-ref-def`).
+2. For each reflow-safe region, collect its content into one logical line, then re-wrap so each emitted line satisfies the width contract below.
+3. For preserve-as-is regions, emit lines verbatim — even if longer than `width`.
 
-Edge cases:
+### Width contract
 
-- A single token longer than `width` is emitted on its own line (no mid-word break).
-- `width < 20` is clamped to `20` defensively.
-- An invalid `width` preference (NaN, ≤0) falls back to `80`.
+`width` is the **maximum length of the entire emitted line**, including every prefix character (blockquote markers, list markers, hang indentation). That is the user-visible column count and matches `prettier --prose-wrap`, `mdformat`, and `fmt(1)`.
+
+For each output line in a reflow region, the budget for content is `width - prefixLen`, where `prefixLen` is the rendered length of:
+
+- The blockquote prefix stack (e.g. `> > ` is 4 chars at depth 2).
+- Plus, for the first output line of a list item: the list marker + its trailing space (e.g. `- ` is 2 chars; `1. ` is 3; `- [ ] ` is 6 for a task item).
+- Plus, for continuation lines of a list item: hang indentation matching the marker width (so wrapped list-item content aligns under the first content character).
+
+Example, `width = 40`, input `> - A long bullet that needs reflowing`:
+
+```
+> - A long bullet that needs
+>   reflowing
+```
+
+Both lines are ≤ 40 chars. The first uses prefix `> - ` (4) leaving 36 for content; the second uses prefix `>   ` (4 — quote marker plus 2-space hang) leaving 36 for content.
+
+### Greedy word fill
+
+For each reflow region, after computing the prefix and per-line content budget:
+
+- Tokenize content preserving inline code spans (`` `…` ``), inline links (`[text](url)` and `[text][id]`), and autolinks (`<…>`) as atomic — never broken across lines.
+- Walk tokens left-to-right; pack tokens onto the current line, joining with single spaces, until adding the next token would exceed the line's budget. Then emit the line and start a new one with the continuation prefix.
+
+### Edge cases
+
+- **Token longer than budget:** emit it alone on its own line. The line will exceed `width`; that's acceptable (no mid-token break, since breaking inside `[link](https://very-long-url)` or `` `inline_code_with_no_spaces` `` would corrupt the markup).
+- **Prefix alone ≥ width:** the line cannot be wrapped meaningfully (e.g. a deeply nested blockquote with `width = 30` and prefix length 32). Degenerate fallback: emit one token per line. The lines will exceed `width`; this is the least-bad outcome.
+- **`width < 20`:** clamp to `20` defensively.
+- **Invalid `width` preference (NaN, ≤ 0):** fall back to `80`.
+- **Hard-break-terminated lines** (input has a hard break — see classifier): preserve the hard break on the *last* output line of that input span; it does not influence the budget calculation.
 
 ## Unwrap algorithm
 
 `unwrap(text, { hyphenation, keepBlankLines })`:
 
 1. Normalize line endings (CRLF/CR → LF).
-2. Run the line classifier (see below) to assign each line a role.
-3. Group consecutive joinable lines (`prose`, `list-item` continuations, `blockquote` content of matching depth) into reflow groups.
-4. For each reflow group, join with single spaces, applying the hyphenation rule if enabled.
-5. Re-emit each group's lines with the original prefix (blockquote chain, list marker + hang).
-6. Preserve-as-is roles are passed through untouched.
+2. Run the line classifier (see below). Each line yields a `Classified` record (see §"Classifier output shape" for the exact type).
+3. Group consecutive joinable lines into reflow groups. Two lines belong to the same group iff:
+   - Their **blockquote prefix stacks are identical** (same depth, same per-frame marker).
+   - Their **inner roles compose** — see §"Reflow-group rules" below.
+   - Neither line is preceded by a hard-break terminator (see §"Hard-break handling").
+4. For each reflow group, join the content with single spaces, applying the hyphenation rule if enabled.
+5. Re-emit each group's lines with the original prefix stack reconstructed (blockquote chain + list marker + hang for the first line of a list item; blockquote chain + hang indent for continuation lines).
+6. Preserve-as-is roles (`fence-boundary`, `in-fence`, `indented-code`, `heading-atx`, `heading-setext`, `hr`, `table-row`, `html-block`, `link-ref-def`) are passed through untouched.
 7. If `keepBlankLines` is on, every blank line in the input becomes a blank line in the output. If off, runs of blank lines collapse to a single blank line.
+
+### Reflow-group rules
+
+| previous inner role | current inner role | grouped? |
+| --- | --- | --- |
+| `prose` | `prose` | yes |
+| `list-item` | `prose` (continuation, sufficient indent) | yes — current is treated as a continuation of the list item |
+| `list-item` | `list-item` (different marker, same indent) | no — new list item starts a new group |
+| any | `blank` | no — paragraph break |
+| any | preserve-as-is role | no — boundary |
+
+A `prose` line counts as a list-item continuation when its leading indentation is ≥ the parent list item's hang-indent column. CommonMark's "lazy continuation" (continuation without sufficient indent) is also recognized for unwrap purposes — if the prior line is a list-item and the current `prose` line has zero indent and no intervening blank, treat it as continuation. This matches what users typically write.
+
+### Hard-break handling
+
+A line classified with the `hardBreak` flag set (trailing 2+ spaces or trailing `\`) **terminates its reflow group** — joining stops, the line is emitted with its hard-break marker preserved verbatim, and the next non-blank line starts a fresh reflow group. This applies to both wrap and unwrap:
+
+- **Unwrap:** the line is the LAST line included in its current group's join. The trailing `  ` or `\` is kept on output, followed by a literal newline; the following line begins a new group.
+- **Wrap:** for an input span being re-wrapped, a hard break in the source is preserved at the position it appeared on the *last* output line of the corresponding content. (In practice this means: when reflowing a span that contains a hard break, split the span at the hard break, wrap each piece independently, and emit the hard-break marker at the end of the piece that contained it.)
 
 ### Hyphenation rule
 
@@ -287,9 +334,53 @@ Protected tokens are replaced with placeholders during the join, then restored. 
 
 ## Line classifier
 
-Single-pass classification with two-line lookahead (needed for setext headings). Lines are CRLF/CR-normalized to LF before classification. Each line is assigned exactly one role from the list below; classification stops at the first match in the order listed.
+Single-pass classification with two-line lookahead (needed for setext headings). Lines are CRLF/CR-normalized to LF before classification.
 
-> **Note on regex notation.** Regexes are written below in fenced code blocks rather than tables, because pipe characters (`|`) in patterns corrupt Markdown table cells. Each regex is the literal source — including the leading `^` anchor — that will be defined as a named `const` in `src/lib/regex.ts`.
+### Classifier output shape
+
+Markdown prefixes compose: a line like `> - item` is a blockquote AROUND a list item, not just one or the other. A flat single-role enum would lose that structure and break list-item hang indentation under quotes. So the classifier strips prefixes recursively and returns:
+
+```ts
+type BlockquoteFrame = { marker: ">"; spaceAfter: boolean };
+
+type InnerRole =
+  | "blank"
+  | "fence-boundary"
+  | "in-fence"
+  | "indented-code"
+  | "heading-atx"
+  | "heading-setext"
+  | "hr"
+  | "list-item"          // includes task-item via taskState field
+  | "table-row"
+  | "html-block"
+  | "link-ref-def"
+  | "prose";
+
+type Classified = {
+  prefixes: BlockquoteFrame[];   // outer-to-inner; depth = prefixes.length
+  role: InnerRole;
+  content: string;               // line content with all prefixes stripped
+  rawPrefix: string;             // exact prefix string from input, for round-tripping
+  // role-specific extras:
+  listMarker?: string;           // e.g. "-", "*", "1.", "1)" — present when role === "list-item"
+  hangIndent?: number;           // columns of hang indent for list-item continuations
+  taskState?: " " | "x" | "X";   // present when list-item is a task-item
+  fenceChar?: "`" | "~";         // present on fence-boundary
+  fenceLen?: number;             // present on fence-boundary
+  hardBreak?: "spaces" | "backslash"; // present when the line's content ends in a hard break
+};
+```
+
+The classification procedure for each line:
+
+1. Peel off blockquote frames left-to-right by repeatedly matching `^ {0,3}> ?` and pushing each onto `prefixes`. The remaining substring is the inner content.
+2. Run the inner-role recognizers (in the order listed below) against that inner content. The first match wins.
+3. Detect a hard break on the inner content (independent of role).
+
+So `> - item` produces `{ prefixes: [{marker: ">", spaceAfter: true}], role: "list-item", listMarker: "-", content: "item", ... }`. A line `> - foo  ` (with two trailing spaces) additionally has `hardBreak: "spaces"`.
+
+> **Note on regex notation.** Regexes below are in fenced code blocks rather than tables, because pipe characters (`|`) in patterns corrupt Markdown table cells. Each regex is the literal source — including the leading `^` anchor — that will be defined as a named `const` in `src/lib/regex.ts`. Regexes apply to the inner content (after blockquote prefix stripping), not the raw line.
 
 **`blank`** — line is empty or whitespace-only.
 
@@ -317,7 +408,7 @@ Single-pass classification with two-line lookahead (needed for setext headings).
 ^ {0,3}#{1,6}(\s|$)
 ```
 
-**`heading-setext`** — assigned to BOTH the heading text line and its underline. Detection: the next line matches the underline pattern, the current line is non-blank prose, and the current line is not itself a list-item, blockquote, or other special role. Underline pattern:
+**`heading-setext`** — assigned to BOTH the heading text line and its underline. Detection: the next line matches the underline pattern, the current line is non-blank prose, and the current line is not itself a list-item or other special role. (Blockquote prefixes do not block setext detection — `> Title\n> ===` is a valid setext heading inside a quote, with `prefixes` of depth 1 on both lines.) Underline pattern:
 
 ```
 ^ {0,3}(=+|-+)\s*$
@@ -329,11 +420,11 @@ Single-pass classification with two-line lookahead (needed for setext headings).
 ^ {0,3}([-*_])(?:\s*\1){2,}\s*$
 ```
 
-**`blockquote`** — one or more `>` markers at the start, with optional single space between them. Depth = count of `>` characters at start.
-
-```
-^ {0,3}>
-```
+> **Blockquote markers are NOT an inner role** — they are stripped to `prefixes[]` before inner-role classification (see §"Classifier output shape"). The peel pattern is:
+>
+> ```
+> ^ {0,3}> ?
+> ```
 
 **`list-item`** — bullet (`-`/`*`/`+`) or ordered (`1.`/`1)`, max 9 digits per CommonMark). Captures indent (group 1), marker (group 2), and the trailing whitespace (group 3) so the hang-indent column is known.
 
@@ -341,10 +432,10 @@ Single-pass classification with two-line lookahead (needed for setext headings).
 ^(\s*)([-*+]|\d{1,9}[.)])(\s+)
 ```
 
-**`task-item`** — a `list-item` whose content begins with a task checkbox.
+**Task items** — not a separate inner role. A `list-item` whose content begins with `[ ]`, `[x]`, or `[X]` followed by whitespace gets `taskState` set on the `Classified` record; the inner role stays `list-item`. The check pattern (applied to list-item content):
 
 ```
-(content begins with) \[[ xX]\]\s
+^\[[ xX]\]\s
 ```
 
 **`table-row`** — pipe-delimited table row. Detection requires seeing a separator row, where the separator row pattern (using a regex literal so the pipes don't break the doc) is:
@@ -384,7 +475,7 @@ These were flagged for careful review:
 - **Setext underline:** `^(=+|-+)\s*$` — but only counts as a heading when the prior line is non-blank prose and not itself a special role.
 - **HR:** `^(\s{0,3})([-*_])(?:\s*\2){2,}\s*$` — 3+ of the same char, allows internal spaces, captures the char to ensure consistency.
 - **Fence:** opener and closer must match char (`` ` `` vs `~`) and the closer's length must be `>=` opener's length.
-- **Blockquote depth:** count `>` characters at start, allowing optional single space between them. Nested-quote reflow groups by depth.
+- **Blockquote peel:** the `^ {0,3}> ?` pattern is applied repeatedly during prefix-stripping (not as a single role match). Reflow grouping requires the entire blockquote prefix stack to match exactly, not just depth.
 
 Each regex will be defined as a named `const` in `src/lib/regex.ts` with a comment showing example matches and counter-examples.
 
@@ -496,7 +587,7 @@ These are for manual evaluation: paste a fixture into a buffer, run Unwrap (or W
 
 ## Automated tests
 
-The transforms (`wrap`, `unwrap`, `classify`, `inline`) are pure string-in/string-out functions. They get unit tests using Node's built-in [`node:test`](https://nodejs.org/api/test.html) runner — no extra dependencies, runs against the TypeScript via `tsx`.
+The transforms (`wrap`, `unwrap`, `classify`, `inline`) are pure string-in/string-out functions. They get unit tests using Node's built-in [`node:test`](https://nodejs.org/api/test.html) runner — no test framework dependency. `tsx` is added as a dev dependency to run the TypeScript test files directly.
 
 ```jsonc
 // package.json scripts
