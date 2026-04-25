@@ -463,7 +463,7 @@ A line is `table-row` if it (a) matches `TABLE_SEPARATOR`, (b) is the line immed
 
 **`prose`** — anything else. Reflowed.
 
-Setext detection requires looking at the next line: when classifying line `i`, peek at line `i+1` against the setext underline pattern. The classifier produces `{ role, prefix, content, depth }` tuples for each line so the reflower has everything it needs without re-parsing.
+Setext detection requires looking at the next line: when classifying line `i`, peek at line `i+1` against the setext underline pattern. The classifier produces `Classified` records (see §"Classifier output shape" — `{ prefixes, role, content, rawPrefix, ...role-specific extras, hardBreak? }`) so the reflower has everything it needs without re-parsing.
 
 ### Critical regex notes
 
