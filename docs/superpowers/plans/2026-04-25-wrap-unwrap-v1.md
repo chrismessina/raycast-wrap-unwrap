@@ -1738,13 +1738,25 @@ test("unwrap strips soft hyphens when enabled", () => {
   assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "an interesting word");
 });
 
-test("unwrap preserves intentional compounds", () => {
-  // The hyphen rule only fires on `[a-z]-` — capital before hyphen is preserved.
+test("unwrap leaves single-line compounds alone (not split, no hyphenation runs)", () => {
   const input = "state-of-the-art";
   assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "state-of-the-art");
 });
 
-test("unwrap with hyphenation off keeps the hyphen", () => {
+test("unwrap preserves capital-led split words (no strip, but joined with space)", () => {
+  // The hyphen rule excludes capital-led runs. The hyphen stays; lines join with a space.
+  const input = "A State-\nwide policy";
+  assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "A State- wide policy");
+});
+
+test("unwrap mid-compound break — known v1 limitation: gains a space", () => {
+  // The hyphen rule excludes mid-compound breaks (lowercase run preceded by `-`).
+  // The hyphen stays; lines join with a space. Documented limitation.
+  const input = "the state-of-the-\nart";
+  assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "the state-of-the- art");
+});
+
+test("unwrap with hyphenation off keeps the hyphen verbatim", () => {
   const input = "an inter-\nesting word";
   assert.equal(unwrap(input, { ...dflt, hyphenation: false }), "an inter- esting word");
 });
@@ -2613,18 +2625,26 @@ This is a paragraph that uses [a ref link][one] and [another][two] for context.
 ```md
 <!--
 FIXTURE — hyphenation
-Input: soft-broken words and intentional compound words
-Expected on Unwrap with hyphenation ON: `inter-` + `esting` -> `interesting`; compounds preserved
-Expected on Unwrap with hyphenation OFF: hyphens preserved verbatim with single space join
+Input: soft-broken words, capital-led broken words, and a known-limitation case (mid-compound break)
+Expected on Unwrap with hyphenation ON:
+  - `inter-` + `esting` → `interesting` (soft hyphen stripped)
+  - `every-` + `where` → `everywhere` (soft hyphen stripped — same word continued)
+  - `State-` + `wide` → `State- wide` (capital-led words preserve the hyphen, with a space)
+  - `state-of-the-` + `art` → `state-of-the- art` (KNOWN LIMITATION — mid-compound break gains a space)
+Expected on Unwrap with hyphenation OFF: every case keeps the hyphen with a single space join
 -->
 
 This is an inter-
 esting test of soft hyphens that should join cleanly.
 
-State-of-the-art compound words should not be flattened.
-
 A cross-platform tool runs every-
-where, but should not become "everywhere" if the next char is a different word.
+where so the soft hyphen joins both halves of one word.
+
+A State-
+wide policy keeps the hyphen because the broken word is capital-led.
+
+The state-of-the-
+art is a known v1 limitation: a mid-compound break gains a space.
 ```
 
 **`12-hard-breaks.md`**

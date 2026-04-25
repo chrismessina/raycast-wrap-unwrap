@@ -315,12 +315,18 @@ A line classified with the `hardBreak` flag set (trailing 2+ spaces or trailing 
 
 ### Hyphenation rule
 
-When `hyphenation: true`, while joining two `prose` lines:
+When `hyphenation: true`, while joining two `prose` lines, the prior line is checked for a soft hyphen at end-of-line. The check uses `HYPHEN_BREAK_END = /(?:^|[^A-Za-z-])[a-z]+-$/` — a run of lowercase letters immediately before the trailing hyphen, where the run is NOT preceded by another letter or a hyphen. The next line must begin with `[a-z]`.
 
-- If the prior line ends with `[a-z]-` (lowercase letter followed by hyphen at end of line) AND the next line begins with `[a-z]`, drop the hyphen and join with no space.
-- Otherwise, keep the hyphen and join with a single space.
+If the regex matches AND the next line starts with a lowercase letter, drop the hyphen and join with no space. Otherwise, keep the hyphen and join with a single space.
 
-This preserves intentional compounds like `state-of-the-art` while cleaning up `inter-\nesting` → `interesting`.
+Cases:
+
+- `inter-` + `esting` → matches (start-of-string before `inter`) → `interesting`. ✓
+- `State-` + `wide` → no match (capital `S` is `[A-Za-z]`, excluded) → `State- wide`. (Capital-led words preserve the hyphen.)
+- `123-` + `something` → no match (no `[a-z]+` run before `-`) → `123- something`.
+- `state-of-the-` + `art` → no match (the `the` run is preceded by `-`, excluded) → `state-of-the- art`. **Known v1 limitation:** mid-compound line breaks gain a space. Workaround: turn hyphenation off (`Strip Soft Hyphens` preference) for documents with hyphenated compounds split across lines.
+
+This preserves the common case (`inter-`-style soft breaks) while avoiding the most jarring incorrect strips (capital-led words, digits). The compound-mid-break case is rare in practice and accepted as a follow-up.
 
 ### Inline preservation
 
@@ -470,7 +476,7 @@ Setext detection requires looking at the next line: when classifying line `i`, p
 These were flagged for careful review:
 
 - **List markers:** `^(\s*)([-*+]|\d{1,9}[.)])(\s+)` — `\d{1,9}` not `\d+` (CommonMark cap), `[.)]` accepts both `1.` and `1)`, capturing the trailing whitespace as group 3 so we know the hang-indent column.
-- **Hyphen-join:** `[a-z]-$` on prior line, `^[a-z]` on next. NOT `\w` — that would match digits.
+- **Hyphen-join:** `(?:^|[^A-Za-z-])[a-z]+-$` on prior line, `^[a-z]` on next. NOT `\w` — that would match digits. The leading anchor `(?:^|[^A-Za-z-])` ensures the lowercase-letter run before the hyphen isn't preceded by another letter (which would mean a capital-led word) or a hyphen (mid-compound break).
 - **Hard break:** `/  +$/` — must be applied before any whitespace trimming.
 - **Setext underline:** `^(=+|-+)\s*$` — but only counts as a heading when the prior line is non-blank prose and not itself a special role.
 - **HR:** `^(\s{0,3})([-*_])(?:\s*\2){2,}\s*$` — 3+ of the same char, allows internal spaces, captures the char to ensure consistency.
@@ -578,7 +584,7 @@ Top-level `README.md` covers:
 | `08-tables.md`                | pipe tables                                                                                                  |
 | `09-html-blocks.md`           | `<div>...</div>`, comments                                                                                   |
 | `10-link-ref-defs.md`         | reference-style links + footnote definitions                                                                 |
-| `11-hyphenation.md`           | soft hyphens (`inter-\nesting`) and intentional compounds (`state-\nof-the-art`)                             |
+| `11-hyphenation.md`           | soft hyphens (`inter-\nesting` → `interesting`); capital-led preserved; mid-compound limitation             |
 | `12-hard-breaks.md`           | trailing-two-spaces, trailing `\`                                                                            |
 | `13-mixed-realistic.md`       | a realistic doc combining most of the above                                                                  |
 | `14-edge-cases.md`            | empty input, single blank line, whitespace-only line, mixed CRLF, very long single line, no trailing newline |
@@ -598,7 +604,7 @@ The transforms (`wrap`, `unwrap`, `classify`, `inline`) are pure string-in/strin
 
 - **`classify.test.ts`** — every role has at least one positive and one negative case. Critical pairs: `---` as HR vs setext underline (depends on prior line), `*foo*` start-of-line as emphasis vs `* foo` as list item, indented `    code` inside vs outside a list, fence open/close char + length matching, table separator detection, ordered-list 9-digit cap.
 - **`wrap.test.ts`** — output never exceeds `width` for joinable regions; preserve-as-is regions emit unchanged; inline code spans and links are never split; oversized tokens emit on their own line; `width < 20` clamps to 20.
-- **`unwrap.test.ts`** — paragraphs join with single spaces; blank-line collapse vs preserve; fence/table/HTML pass-through; blockquote depth grouping; list continuation merging; hyphenation rule on (`inter-\nesting` → `interesting`) and off; intentional compound preserved (`state-\nof-the-art` → `state-of-the-art`).
+- **`unwrap.test.ts`** — paragraphs join with single spaces; blank-line collapse vs preserve; fence/table/HTML pass-through; blockquote depth grouping; list continuation merging; hyphenation rule on (`inter-\nesting` → `interesting`); hyphenation off keeps the hyphen verbatim (`inter-\nesting` → `inter- esting`); capital-led words don't strip (`State-\nwide` → `State- wide`); known limitation — mid-compound breaks gain a space (`state-of-the-\nart` → `state-of-the- art`).
 - **`inline.test.ts`** — code spans (`` ` ``, `` `` ``), inline links `[t](u)`, reference links `[t][id]`, autolinks `<https://…>`, `<email@…>` are tokenized and round-trip restore correctly; nested cases (link with code inside the text).
 
 These are intended to catch classifier-ordering regressions and edge-case escapes, NOT to replace the manual fixtures (which test perceived correctness end-to-end via the actual extension).
