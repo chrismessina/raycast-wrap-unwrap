@@ -104,11 +104,40 @@ HUD copy:
 | wrap    | `Pasted wrapped text`   | `Copied wrapped text`   |
 | unwrap  | `Pasted unwrapped text` | `Copied unwrapped text` |
 
-Errors:
+### Error toasts
 
-- `NoTextError` → `showToast({ style: Failure, title: "No text available", message: "Select text or copy it to the clipboard." })`
-- Input exceeds `MAX_INPUT` → `showToast({ style: Failure, title: "Text exceeds 1MB limit", message: "Use a text editor for documents this large." })` — handled before the transform runs, not via `showFailureToast`.
-- Anything else → `showFailureToast(error, { title: "Failed to wrap text" })` (or "unwrap").
+Every failure toast in this extension must include a **Copy Error** `primaryAction` so the user can grab the error message without screenshotting. This applies to expected failures (`NoTextError`, size cap) AND unexpected ones (caught by the outer `catch`).
+
+Shape:
+
+```ts
+async function failureToast(title: string, message: string) {
+  await showToast({
+    style: Toast.Style.Failure,
+    title,
+    message,
+    primaryAction: {
+      title: "Copy Error",
+      onAction: async () => {
+        await Clipboard.copy(`${title}: ${message}`);
+      },
+    },
+  });
+}
+```
+
+Cases:
+
+- `NoTextError` → `failureToast("No text available", "Select text or copy it to the clipboard.")`
+- Input exceeds `MAX_INPUT` → `failureToast("Text exceeds 1MB limit", "Use a text editor for documents this large.")` — handled before the transform runs.
+- Anything else → caught by the outer `try`/`catch`; extract `error instanceof Error ? error.message : "Unknown error"` into `message`, then `failureToast("Failed to wrap text", message)` (or "Failed to unwrap text").
+
+We do NOT use `showFailureToast` from `@raycast/utils` because the Copy Error contract is uniform across all three cases and a small local helper is clearer than threading `primaryAction` through `showFailureToast`'s options.
+
+### Type & API rules (enforced)
+
+- **Never hand-write `Preferences` or `Arguments` types.** Raycast auto-generates these from `package.json`. Use `getPreferenceValues<Preferences>()` and `LaunchProps<{ arguments: Arguments.CommandName }>` with the generated types directly.
+- **No `any` casts.** Use proper types, `unknown`, or generics. The `launchContext` shapes (`WrapContext`, `UnwrapContext`) are the only places we hand-define types, and those are the cross-extension contract — not Raycast-generated.
 
 ## Preferences
 
