@@ -6,7 +6,7 @@ export const BLOCKQUOTE_PEEL = /^ {0,3}> ?/;
 /** Fenced code-block opener/closer: backtick or tilde, length ≥ 3. */
 export const FENCE_BOUNDARY = /^ {0,3}(`{3,}|~{3,})/;
 
-/** Indented code: 4+ leading spaces with a non-space body. */
+/** Indented code: 4+ leading spaces with a non-space body. Empty whitespace-only lines do not match. */
 export const INDENTED_CODE = /^ {4,}\S/;
 
 /** ATX heading: 1-6 `#` followed by whitespace or EOL. */
@@ -41,7 +41,7 @@ export const TABLE_SEPARATOR = /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/;
 /** Hard break: 2+ trailing spaces. Apply BEFORE any trim. */
 export const HARD_BREAK_SPACES = / {2,}$/;
 
-/** Hard break: single trailing backslash. */
+/** Hard break: trailing backslash. Caller is responsible for distinguishing escaped literal backslashes (e.g. `foo\\` in source ending with two backslashes) from a true hard-break marker. */
 export const HARD_BREAK_BACKSLASH = /\\$/;
 
 /**

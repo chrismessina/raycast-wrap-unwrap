@@ -31,12 +31,21 @@ test("FENCE_BOUNDARY matches both backtick and tilde fences", () => {
   assert.doesNotMatch("    ```", FENCE_BOUNDARY); // 4 spaces = code block, not fence
 });
 
+test("INDENTED_CODE matches 4+ leading spaces", () => {
+  assert.match("    code", INDENTED_CODE);
+  assert.match("        deeper", INDENTED_CODE);
+  assert.doesNotMatch("   not code", INDENTED_CODE); // only 3 spaces
+  assert.doesNotMatch("    ", INDENTED_CODE); // no body
+});
+
 test("HEADING_ATX matches ATX headings 1-6", () => {
   assert.match("# H1", HEADING_ATX);
   assert.match("###### H6", HEADING_ATX);
   assert.match("#", HEADING_ATX);
   assert.doesNotMatch("####### too many", HEADING_ATX);
   assert.doesNotMatch("#nospace", HEADING_ATX);
+  // Closed ATX (trailing # marks) — should still match.
+  assert.match("# Heading #", HEADING_ATX);
 });
 
 test("SETEXT_UNDERLINE matches = and - rules", () => {
@@ -87,6 +96,8 @@ test("LINK_REF_DEF matches reference link definitions", () => {
   assert.match("[id]: https://example.com", LINK_REF_DEF);
   assert.match('[id]: https://example.com "title"', LINK_REF_DEF);
   assert.doesNotMatch("[id]:", LINK_REF_DEF);
+  // Whitespace required between `]:` and the URL.
+  assert.doesNotMatch("[id]:url", LINK_REF_DEF);
 });
 
 test("TABLE_SEPARATOR matches separator rows", () => {
@@ -94,6 +105,8 @@ test("TABLE_SEPARATOR matches separator rows", () => {
   assert.match("|:--|:-:|--:|", TABLE_SEPARATOR);
   assert.match("--- | ---", TABLE_SEPARATOR);
   assert.doesNotMatch("| header | header |", TABLE_SEPARATOR);
+  // Bare `---` is HR, not a table separator — load-bearing distinction.
+  assert.doesNotMatch("---", TABLE_SEPARATOR);
 });
 
 test("HARD_BREAK_SPACES matches 2+ trailing spaces", () => {
@@ -113,11 +126,6 @@ test("HYPHEN_BREAK_END matches lowercase letter + hyphen at end", () => {
   assert.doesNotMatch("State-", HYPHEN_BREAK_END); // capital before hyphen
   assert.doesNotMatch("123-", HYPHEN_BREAK_END);
   assert.doesNotMatch("inter", HYPHEN_BREAK_END);
-});
-
-test("INDENTED_CODE matches 4+ leading spaces", () => {
-  assert.match("    code", INDENTED_CODE);
-  assert.match("        deeper", INDENTED_CODE);
-  assert.doesNotMatch("   not code", INDENTED_CODE); // only 3 spaces
-  assert.doesNotMatch("    ", INDENTED_CODE); // no body
+  // Mid-compound break: `the` run is preceded by `-`, so excluded.
+  assert.doesNotMatch("state-of-the-", HYPHEN_BREAK_END);
 });
