@@ -10,3 +10,51 @@ test("classify emits one record per input line", () => {
   assert.equal(result[1].content, "b");
   assert.equal(result[2].content, "c");
 });
+
+test("classify recognizes blank lines", () => {
+  const r = classify("\n   \n\t\n");
+  assert.equal(r.length, 4);
+  assert.equal(r[0].role, "blank");
+  assert.equal(r[1].role, "blank");
+  assert.equal(r[2].role, "blank");
+});
+
+test("classify peels a single blockquote frame", () => {
+  const r = classify("> hello");
+  assert.equal(r.length, 1);
+  assert.equal(r[0].prefixes.length, 1);
+  assert.equal(r[0].prefixes[0].marker, ">");
+  assert.equal(r[0].prefixes[0].spaceAfter, true);
+  assert.equal(r[0].content, "hello");
+  assert.equal(r[0].rawPrefix, "> ");
+});
+
+test("classify peels nested blockquote frames", () => {
+  const r = classify("> > nested");
+  assert.equal(r[0].prefixes.length, 2);
+  assert.equal(r[0].content, "nested");
+  assert.equal(r[0].rawPrefix, "> > ");
+});
+
+test("classify peels blockquote with no space after marker", () => {
+  const r = classify(">foo");
+  assert.equal(r[0].prefixes.length, 1);
+  assert.equal(r[0].prefixes[0].spaceAfter, false);
+  assert.equal(r[0].content, "foo");
+});
+
+test("classify treats blockquote-only line as blank inside the quote", () => {
+  // CommonMark: `>` alone is a blockquote containing a blank line.
+  const r = classify(">");
+  assert.equal(r[0].prefixes.length, 1);
+  assert.equal(r[0].role, "blank");
+});
+
+test("CRLF line endings are normalized", () => {
+  const r = classify("a\r\nb\rc");
+  assert.equal(r.length, 3);
+  assert.deepEqual(
+    r.map((x) => x.content),
+    ["a", "b", "c"],
+  );
+});

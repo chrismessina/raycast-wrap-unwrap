@@ -1,5 +1,7 @@
 // src/lib/classify.ts
 
+import { BLOCKQUOTE_PEEL } from "./regex.js";
+
 export type BlockquoteFrame = { marker: ">"; spaceAfter: boolean };
 
 export type InnerRole =
@@ -33,12 +35,37 @@ export type Classified = {
   hardBreak?: "spaces" | "backslash";
 };
 
+function peelBlockquotes(line: string): {
+  prefixes: BlockquoteFrame[];
+  content: string;
+  rawPrefix: string;
+} {
+  const prefixes: BlockquoteFrame[] = [];
+  let rest = line;
+  let rawPrefix = "";
+  while (true) {
+    const match = rest.match(BLOCKQUOTE_PEEL);
+    if (!match) break;
+    const matchedText = match[0];
+    const spaceAfter = matchedText.endsWith(" ");
+    prefixes.push({ marker: ">", spaceAfter });
+    rawPrefix += matchedText;
+    rest = rest.slice(matchedText.length);
+  }
+  return { prefixes, content: rest, rawPrefix };
+}
+
+function isBlank(content: string): boolean {
+  return /^\s*$/.test(content);
+}
+
 export function classify(text: string): Classified[] {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  return lines.map((line) => ({
-    prefixes: [],
-    role: "prose" as InnerRole,
-    content: line,
-    rawPrefix: "",
-  }));
+  return lines.map((line): Classified => {
+    const { prefixes, content, rawPrefix } = peelBlockquotes(line);
+    if (isBlank(content)) {
+      return { prefixes, role: "blank", content, rawPrefix };
+    }
+    return { prefixes, role: "prose", content, rawPrefix };
+  });
 }
