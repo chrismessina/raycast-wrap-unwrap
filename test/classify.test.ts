@@ -58,3 +58,42 @@ test("CRLF line endings are normalized", () => {
     ["a", "b", "c"],
   );
 });
+
+test("classify recognizes fence boundary and in-fence lines", () => {
+  const r = classify("```js\ncode here\nmore code\n```\nafter");
+  assert.equal(r[0].role, "fence-boundary");
+  assert.equal(r[0].fenceChar, "`");
+  assert.equal(r[0].fenceLen, 3);
+  assert.equal(r[1].role, "in-fence");
+  assert.equal(r[2].role, "in-fence");
+  assert.equal(r[3].role, "fence-boundary");
+  assert.equal(r[4].role, "prose");
+});
+
+test("classify requires closer to match opener char", () => {
+  // ~~~ does not close ```
+  const r = classify("```\nstuff\n~~~\n```");
+  assert.equal(r[0].role, "fence-boundary");
+  assert.equal(r[1].role, "in-fence");
+  assert.equal(r[2].role, "in-fence"); // not a closer for ```
+  assert.equal(r[3].role, "fence-boundary");
+});
+
+test("classify accepts longer closer than opener", () => {
+  const r = classify("```\nstuff\n`````\nafter");
+  assert.equal(r[2].role, "fence-boundary");
+  assert.equal(r[3].role, "prose");
+});
+
+test("classify rejects shorter closer than opener", () => {
+  const r = classify("`````\nstuff\n```\nstill in fence");
+  assert.equal(r[2].role, "in-fence");
+});
+
+test("classify allows fences inside blockquotes", () => {
+  const r = classify("> ```\n> code\n> ```");
+  assert.equal(r[0].role, "fence-boundary");
+  assert.equal(r[0].prefixes.length, 1);
+  assert.equal(r[1].role, "in-fence");
+  assert.equal(r[2].role, "fence-boundary");
+});

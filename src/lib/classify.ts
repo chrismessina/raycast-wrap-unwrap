@@ -1,6 +1,6 @@
 // src/lib/classify.ts
 
-import { BLOCKQUOTE_PEEL } from "./regex.js";
+import { BLOCKQUOTE_PEEL, FENCE_BOUNDARY } from "./regex.js";
 
 export type BlockquoteFrame = { marker: ">"; spaceAfter: boolean };
 
@@ -59,13 +59,66 @@ function isBlank(content: string): boolean {
   return /^\s*$/.test(content);
 }
 
+type FenceState = { char: "`" | "~"; len: number } | null;
+
+function classifyFenceBoundary(
+  content: string,
+): { fenceChar: "`" | "~"; fenceLen: number } | null {
+  const m = content.match(FENCE_BOUNDARY);
+  if (!m) return null;
+  const run = m[1];
+  return { fenceChar: run[0] as "`" | "~", fenceLen: run.length };
+}
+
 export function classify(text: string): Classified[] {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  return lines.map((line): Classified => {
+  const out: Classified[] = [];
+  let fence: FenceState = null;
+
+  for (const line of lines) {
     const { prefixes, content, rawPrefix } = peelBlockquotes(line);
-    if (isBlank(content)) {
-      return { prefixes, role: "blank", content, rawPrefix };
+
+    // Inside a fence: only allow a matching closer; everything else is in-fence (a blank line still counts as in-fence).
+    if (fence) {
+      const fb = classifyFenceBoundary(content);
+      if (fb && fb.fenceChar === fence.char && fb.fenceLen >= fence.len) {
+        out.push({
+          prefixes,
+          role: "fence-boundary",
+          content,
+          rawPrefix,
+          fenceChar: fb.fenceChar,
+          fenceLen: fb.fenceLen,
+        });
+        fence = null;
+      } else {
+        out.push({ prefixes, role: "in-fence", content, rawPrefix });
+      }
+      continue;
     }
-    return { prefixes, role: "prose", content, rawPrefix };
-  });
+
+    // Outside a fence:
+    if (isBlank(content)) {
+      out.push({ prefixes, role: "blank", content, rawPrefix });
+      continue;
+    }
+
+    const fb = classifyFenceBoundary(content);
+    if (fb) {
+      fence = { char: fb.fenceChar, len: fb.fenceLen };
+      out.push({
+        prefixes,
+        role: "fence-boundary",
+        content,
+        rawPrefix,
+        fenceChar: fb.fenceChar,
+        fenceLen: fb.fenceLen,
+      });
+      continue;
+    }
+
+    out.push({ prefixes, role: "prose", content, rawPrefix });
+  }
+
+  return out;
 }
