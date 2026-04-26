@@ -31,7 +31,16 @@ export type Classified = {
   /** Outer-to-inner blockquote frames. Depth = prefixes.length. */
   prefixes: BlockquoteFrame[];
   role: InnerRole;
-  /** Line content with all prefixes stripped. */
+  /**
+   * Line content with blockquote prefixes stripped.
+   *
+   * Special case: for `list-item` records, `content` is ALSO stripped of the
+   * list marker, gap, and (when present) the task checkbox — so it holds only
+   * the inner text. To round-trip a list-item line, an emitter needs
+   * `rawPrefix + listMarker + gap + (taskState ? "[x] " : "") + content`,
+   * where `gap = " ".repeat(hangIndent - indent.length - listMarker.length)`.
+   * For all other roles, `content` is the verbatim post-peel line.
+   */
   content: string;
   /** Exact prefix string as it appeared in the input — used for round-trip emission. */
   rawPrefix: string;
@@ -225,6 +234,11 @@ export function classify(text: string): Classified[] {
 
     // Indented code: only outside a list. If any list-item appears in the run since
     // the last blank at the same prefix depth, treat indented lines as continuation prose.
+    // Known v1 limitation: a blank between a list item and a 4-space-indented
+    // continuation (CommonMark "loose list" continuation) is classified here as
+    // indented-code, not prose. Both roles are passed through verbatim by wrap/unwrap,
+    // so the round-trip output is unaffected — a faithful classifier would need to
+    // track open-list state across blanks.
     if (INDENTED_CODE.test(content)) {
       const lastBlankIdx =
         [...out]
