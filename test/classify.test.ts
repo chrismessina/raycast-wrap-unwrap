@@ -169,3 +169,28 @@ test("classify recognizes HTML comments as html-block", () => {
   const r = classify("<!-- comment -->");
   assert.equal(r[0].role, "html-block");
 });
+
+test("classify recognizes setext h1 (===) and tags both lines", () => {
+  const r = classify("Title\n=====\n\npara");
+  assert.equal(r[0].role, "heading-setext");
+  assert.equal(r[1].role, "heading-setext");
+  assert.equal(r[2].role, "blank");
+  assert.equal(r[3].role, "prose");
+});
+
+test("classify recognizes setext h2 (---)", () => {
+  const r = classify("Title\n-----");
+  assert.equal(r[0].role, "heading-setext");
+  assert.equal(r[1].role, "heading-setext");
+});
+
+test("--- after a blank line is HR, not setext", () => {
+  const r = classify("para\n\n---");
+  assert.equal(r[2].role, "hr");
+});
+
+test("--- under a list-item is HR, not setext", () => {
+  const r = classify("- item\n---");
+  // prior line is list-item, so --- can't be setext
+  assert.equal(r[1].role, "hr");
+});

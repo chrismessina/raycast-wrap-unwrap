@@ -8,6 +8,7 @@ import {
   INDENTED_CODE,
   LINK_REF_DEF,
   LIST_ITEM,
+  SETEXT_UNDERLINE,
   TASK_MARKER,
 } from "./regex.js";
 
@@ -156,6 +157,21 @@ function classifyListItem(content: string): {
   return { listMarker: marker, hangIndent, innerContent: afterMarker };
 }
 
+function applySetextPass(records: Classified[]): void {
+  for (let i = 0; i < records.length - 1; i++) {
+    const cur = records[i];
+    const next = records[i + 1];
+    // Setext only applies when current line is prose.
+    if (cur.role !== "prose") continue;
+    // The underline must be at the same blockquote depth.
+    if (cur.prefixes.length !== next.prefixes.length) continue;
+    if (!SETEXT_UNDERLINE.test(next.content)) continue;
+    // Tag both lines.
+    cur.role = "heading-setext";
+    next.role = "heading-setext";
+  }
+}
+
 export function classify(text: string): Classified[] {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const out: Classified[] = [];
@@ -267,5 +283,6 @@ export function classify(text: string): Classified[] {
     out.push({ prefixes, role: "prose", content, rawPrefix });
   }
 
+  applySetextPass(out);
   return out;
 }
