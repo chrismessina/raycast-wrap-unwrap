@@ -184,6 +184,14 @@ test("classify recognizes setext h2 (---)", () => {
   assert.equal(r[1].role, "heading-setext");
 });
 
+test("classify retags 3-dash HR as setext h2 when preceded by prose", () => {
+  // Boundary case: --- alone is HR, but adjacent to prose at the same depth
+  // setext takes priority. Confirms applySetextPass overrides the HR tag.
+  const r = classify("para\n---");
+  assert.equal(r[0].role, "heading-setext");
+  assert.equal(r[1].role, "heading-setext");
+});
+
 test("--- after a blank line is HR, not setext", () => {
   const r = classify("para\n\n---");
   assert.equal(r[2].role, "hr");
