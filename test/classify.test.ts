@@ -77,6 +77,7 @@ test("classify requires closer to match opener char", () => {
   assert.equal(r[1].role, "in-fence");
   assert.equal(r[2].role, "in-fence"); // not a closer for ```
   assert.equal(r[3].role, "fence-boundary");
+  assert.equal(r[3].fenceChar, "`"); // confirms state machine resynced on the real closer
 });
 
 test("classify accepts longer closer than opener", () => {
