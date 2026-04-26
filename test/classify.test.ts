@@ -98,3 +98,74 @@ test("classify allows fences inside blockquotes", () => {
   assert.equal(r[1].role, "in-fence");
   assert.equal(r[2].role, "fence-boundary");
 });
+
+test("classify recognizes ATX headings", () => {
+  const r = classify("# H1\n## H2\n###### H6");
+  assert.equal(r[0].role, "heading-atx");
+  assert.equal(r[1].role, "heading-atx");
+  assert.equal(r[2].role, "heading-atx");
+});
+
+test("classify recognizes horizontal rules", () => {
+  const r = classify("---\n***\n___\n- - -");
+  assert.equal(r[0].role, "hr");
+  assert.equal(r[1].role, "hr");
+  assert.equal(r[2].role, "hr");
+  assert.equal(r[3].role, "hr");
+});
+
+test("classify recognizes link reference definitions", () => {
+  const r = classify('[id]: https://example.com "title"');
+  assert.equal(r[0].role, "link-ref-def");
+});
+
+test("classify recognizes list items and captures marker + hang indent", () => {
+  const r = classify("- item\n  * nested\n10) ten");
+  assert.equal(r[0].role, "list-item");
+  assert.equal(r[0].listMarker, "-");
+  assert.equal(r[0].hangIndent, 2);
+  assert.equal(r[0].content, "item");
+
+  assert.equal(r[1].role, "list-item");
+  assert.equal(r[1].listMarker, "*");
+  assert.equal(r[1].hangIndent, 4); // 2-space indent + "* " = 4
+
+  assert.equal(r[2].role, "list-item");
+  assert.equal(r[2].listMarker, "10)");
+  assert.equal(r[2].hangIndent, 4); // "10) " = 4
+});
+
+test("classify detects task items via taskState", () => {
+  const r = classify("- [ ] todo\n- [x] done\n- [X] done");
+  assert.equal(r[0].role, "list-item");
+  assert.equal(r[0].taskState, " ");
+  assert.equal(r[0].content, "todo");
+  assert.equal(r[1].taskState, "x");
+  assert.equal(r[2].taskState, "X");
+});
+
+test("classify recognizes indented code outside a list", () => {
+  const r = classify("para\n\n    code\n    more code");
+  assert.equal(r[0].role, "prose");
+  assert.equal(r[1].role, "blank");
+  assert.equal(r[2].role, "indented-code");
+  assert.equal(r[3].role, "indented-code");
+});
+
+test("classify treats indented text after a list item as list continuation, not code", () => {
+  // 4-space indentation under a list-item marker is continuation, not a code block.
+  const r = classify("- item\n    continuation");
+  assert.equal(r[0].role, "list-item");
+  assert.equal(r[1].role, "prose"); // not indented-code
+});
+
+test("classify recognizes HTML blocks", () => {
+  const r = classify("<div>\nhello\n</div>");
+  assert.equal(r[0].role, "html-block");
+  // Subsequent lines inside an HTML block aren't tracked specially in v1 — they're prose.
+});
+
+test("classify recognizes HTML comments as html-block", () => {
+  const r = classify("<!-- comment -->");
+  assert.equal(r[0].role, "html-block");
+});
