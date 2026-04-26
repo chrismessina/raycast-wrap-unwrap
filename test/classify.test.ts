@@ -202,3 +202,25 @@ test("--- under a list-item is HR, not setext", () => {
   // prior line is list-item, so --- can't be setext
   assert.equal(r[1].role, "hr");
 });
+
+test("classify recognizes a complete pipe table", () => {
+  const r = classify("| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\nafter");
+  assert.equal(r[0].role, "table-row");
+  assert.equal(r[1].role, "table-row");
+  assert.equal(r[2].role, "table-row");
+  assert.equal(r[3].role, "table-row");
+  assert.equal(r[4].role, "blank");
+  assert.equal(r[5].role, "prose");
+});
+
+test("classify table without leading/trailing pipes", () => {
+  const r = classify("a | b\n--- | ---\n1 | 2");
+  assert.equal(r[0].role, "table-row");
+  assert.equal(r[1].role, "table-row");
+  assert.equal(r[2].role, "table-row");
+});
+
+test("classify lone pipe in prose is not a table", () => {
+  const r = classify("foo | bar");
+  assert.equal(r[0].role, "prose");
+});

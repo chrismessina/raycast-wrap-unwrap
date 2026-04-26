@@ -9,6 +9,7 @@ import {
   LINK_REF_DEF,
   LIST_ITEM,
   SETEXT_UNDERLINE,
+  TABLE_SEPARATOR,
   TASK_MARKER,
 } from "./regex.js";
 
@@ -172,6 +173,40 @@ function applySetextPass(records: Classified[]): void {
   }
 }
 
+function applyTablePass(records: Classified[]): void {
+  for (let i = 0; i < records.length; i++) {
+    const cur = records[i];
+    if (cur.role !== "prose") continue;
+    if (!cur.content.includes("|")) continue;
+
+    // Case A: cur is the header — next line is a separator at same depth.
+    const next = records[i + 1];
+    const nextIsSeparator =
+      next &&
+      next.prefixes.length === cur.prefixes.length &&
+      TABLE_SEPARATOR.test(next.content);
+
+    // Case B: cur is itself a separator.
+    const curIsSeparator = TABLE_SEPARATOR.test(cur.content);
+
+    if (nextIsSeparator || curIsSeparator) {
+      // Mark cur and walk forward marking table-rows until blank/role-change/depth-change.
+      cur.role = "table-row";
+      let j = i + 1;
+      while (j < records.length) {
+        const r = records[j];
+        if (r.prefixes.length !== cur.prefixes.length) break;
+        if (r.role === "blank") break;
+        if (r.role !== "prose" && r.role !== "table-row") break;
+        if (!r.content.includes("|") && !TABLE_SEPARATOR.test(r.content)) break;
+        r.role = "table-row";
+        j++;
+      }
+      i = j - 1; // resume after the table
+    }
+  }
+}
+
 export function classify(text: string): Classified[] {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const out: Classified[] = [];
@@ -284,5 +319,6 @@ export function classify(text: string): Classified[] {
   }
 
   applySetextPass(out);
+  applyTablePass(out);
   return out;
 }
