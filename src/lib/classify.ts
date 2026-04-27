@@ -51,6 +51,10 @@ export type Classified = {
   // role-specific extras:
   listMarker?: string;
   hangIndent?: number;
+  /** Raw leading indent for list-item records (preserves nesting + multi-space gaps for round-trip). */
+  listIndent?: string;
+  /** Raw gap between marker and content for list-item records (preserves multi-space alignment). */
+  listGap?: string;
   taskState?: " " | "x" | "X";
   fenceChar?: "`" | "~";
   fenceLen?: number;
@@ -138,6 +142,8 @@ function classifyHtmlBlockStart(content: string): boolean {
 function classifyListItem(content: string): {
   listMarker: string;
   hangIndent: number;
+  listIndent: string;
+  listGap: string;
   taskState?: " " | "x" | "X";
   innerContent: string;
 } | null {
@@ -153,11 +159,19 @@ function classifyListItem(content: string): {
     return {
       listMarker: marker,
       hangIndent,
+      listIndent: indent,
+      listGap: gap,
       taskState: taskMatch[0][1] as " " | "x" | "X",
       innerContent: afterMarker.slice(taskMatch[0].length),
     };
   }
-  return { listMarker: marker, hangIndent, innerContent: afterMarker };
+  return {
+    listMarker: marker,
+    hangIndent,
+    listIndent: indent,
+    listGap: gap,
+    innerContent: afterMarker,
+  };
 }
 
 function applySetextPass(records: Classified[]): void {
@@ -291,6 +305,8 @@ export function classify(text: string): Classified[] {
         rawPrefix,
         listMarker: li.listMarker,
         hangIndent: li.hangIndent,
+        listIndent: li.listIndent,
+        listGap: li.listGap,
         taskState: li.taskState,
       });
       continue;

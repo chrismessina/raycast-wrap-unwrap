@@ -100,3 +100,15 @@ test("unwrap handles empty input", () => {
 test("unwrap normalizes CRLF line endings", () => {
   assert.equal(unwrap("a\r\nb\r\nc", dflt), "a b c");
 });
+
+test("unwrap preserves nested list indentation", () => {
+  // Round-trip preserves the 2-space indent on the nested item.
+  const input = "- outer\n  * nested";
+  assert.equal(unwrap(input, dflt), "- outer\n  * nested");
+});
+
+test("unwrap preserves multi-space gap after list marker", () => {
+  // A 3-space gap between marker and content is intentional alignment.
+  const input = "-   item one\n-   item two";
+  assert.equal(unwrap(input, dflt), "-   item one\n-   item two");
+});

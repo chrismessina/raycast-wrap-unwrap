@@ -51,10 +51,12 @@ function emitGroup(g: Group): string {
   if (g.passthrough) return g.raw ?? "";
   const prefix = emitPrefix(g.header.prefixes);
   if (g.header.role === "list-item") {
+    const indent = g.header.listIndent ?? "";
     const marker = g.header.listMarker ?? "-";
+    const gap = g.header.listGap ?? " ";
     const taskPrefix =
       g.header.taskState !== undefined ? `[${g.header.taskState}] ` : "";
-    return `${prefix}${marker} ${taskPrefix}${g.joined}`;
+    return `${prefix}${indent}${marker}${gap}${taskPrefix}${g.joined}`;
   }
   return prefix + g.joined;
 }
