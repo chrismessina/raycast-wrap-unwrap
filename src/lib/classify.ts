@@ -3,6 +3,8 @@
 import {
   BLOCKQUOTE_PEEL,
   FENCE_BOUNDARY,
+  HARD_BREAK_BACKSLASH,
+  HARD_BREAK_SPACES,
   HEADING_ATX,
   HR,
   INDENTED_CODE,
@@ -207,6 +209,17 @@ function applyTablePass(records: Classified[]): void {
   }
 }
 
+function applyHardBreakPass(records: Classified[]): void {
+  for (const r of records) {
+    if (r.role !== "prose" && r.role !== "list-item") continue;
+    if (HARD_BREAK_SPACES.test(r.content)) {
+      r.hardBreak = "spaces";
+    } else if (HARD_BREAK_BACKSLASH.test(r.content)) {
+      r.hardBreak = "backslash";
+    }
+  }
+}
+
 export function classify(text: string): Classified[] {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const out: Classified[] = [];
@@ -320,5 +333,6 @@ export function classify(text: string): Classified[] {
 
   applySetextPass(out);
   applyTablePass(out);
+  applyHardBreakPass(out);
   return out;
 }

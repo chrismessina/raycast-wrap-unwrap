@@ -224,3 +224,30 @@ test("classify lone pipe in prose is not a table", () => {
   const r = classify("foo | bar");
   assert.equal(r[0].role, "prose");
 });
+
+test("classify detects hard break via trailing 2+ spaces", () => {
+  const r = classify("foo  \nbar");
+  assert.equal(r[0].role, "prose");
+  assert.equal(r[0].hardBreak, "spaces");
+  assert.equal(r[1].hardBreak, undefined);
+});
+
+test("classify detects hard break via trailing backslash", () => {
+  const r = classify("foo\\\nbar");
+  assert.equal(r[0].hardBreak, "backslash");
+});
+
+test("hard break only applies to reflow-eligible roles", () => {
+  const r = classify("# heading  \n\n    code  ");
+  assert.equal(r[0].role, "heading-atx");
+  assert.equal(r[0].hardBreak, undefined);
+  // line 1 is blank
+  assert.equal(r[2].role, "indented-code");
+  assert.equal(r[2].hardBreak, undefined);
+});
+
+test("hard break applies to list items", () => {
+  const r = classify("- item one  \n- item two");
+  assert.equal(r[0].role, "list-item");
+  assert.equal(r[0].hardBreak, "spaces");
+});
