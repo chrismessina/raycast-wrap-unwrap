@@ -79,3 +79,25 @@ Stateful pieces of `classify`:
 - The `ajv` audit warning is in Raycast's dependency tree and cannot be fixed locally.
 - Platform: macOS only (`platforms: ["macOS"]` in `package.json`).
 - Adding a new command requires both a file under `src/` AND a matching entry in `package.json` `commands[]` (the `name` must match the filename without extension).
+
+## Known v1 limitations
+
+These are accepted simplifications, not bugs to chase. Each is documented inline at the relevant code site too.
+
+1. **Mid-compound hyphenation gains a space.** When a word like `state-of-the-art` breaks across lines as `state-of-the-\nart`, unwrap produces `state-of-the- art` (extra space) instead of `state-of-the-art`. The hyphenation rule (`HYPHEN_BREAK_END = /(?:^|[^A-Za-z-])[a-z]+-$/` in `src/lib/regex.ts`) deliberately excludes runs preceded by another hyphen so that intentional compounds like `state-of-the-art` on a single line are not mangled. Doing both correctly requires a dictionary or a heuristic on the joined word, which is out of v1 scope.
+
+2. **Loose-list continuation classified as indented-code.** A blank line between a list item and a 4-space-indented continuation, e.g.:
+
+   ```md
+   - item
+
+       continuation
+   ```
+
+   ...is classified as `list-item / blank / indented-code` even though CommonMark would treat the indented line as a list-item continuation. The wrap and unwrap transforms pass both `indented-code` and `prose` through verbatim within their groups, so round-trip output is unaffected. A faithful classifier would need to track open-list state across blanks. See the comment block in `applySetextPass`'s neighborhood in `src/lib/classify.ts` (the indented-code branch of `classify`).
+
+3. **Multi-space gap after list marker is preserved but not canonicalized.** If you write `-   item` with three spaces between marker and content, wrap/unwrap preserve those three spaces. They do not normalize to single-space. This is intentional — see `listGap` on `Classified` in `src/lib/classify.ts` — but worth knowing if you're surprised by your output keeping the original alignment.
+
+4. **HTML block boundary is single-line only.** A `<div>` tag is tagged `html-block`, but subsequent lines until `</div>` are classified by their own content rather than being held inside an HTML block. The plan accepts this for v1; surrounding prose may reflow into an HTML region in pathological inputs. Wrapping common doc-style HTML (a div block surrounded by blank lines) works fine.
+
+If you find a real-world input where one of these limitations produces visibly wrong output, add a fixture under `test-fixtures/` and open an issue before trying to fix the underlying classifier — fixing them naively can cascade into the working cases.

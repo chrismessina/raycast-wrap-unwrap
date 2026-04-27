@@ -615,3 +615,17 @@ These are intended to catch classifier-ordering regressions and edge-case escape
 - Per-command argument support (`width` as a Raycast `arguments[]` value for one-off overrides).
 - "Sentence per line" wrap mode.
 - Localization / CJK width awareness.
+
+## Known v1 limitations
+
+These are accepted simplifications. Each is documented inline at the relevant code site.
+
+1. **Mid-compound hyphenation gains a space.** A break like `state-of-the-\nart` unwraps to `state-of-the- art`, not `state-of-the-art`. The `HYPHEN_BREAK_END` rule deliberately excludes runs preceded by `-` so single-line compounds like `state-of-the-art` are not mangled. Workaround: turn `Strip Soft Hyphens` off for documents with split compounds.
+
+2. **Loose-list continuation classified as indented-code.** A blank line between a list item and a 4-space-indented continuation produces records `list-item / blank / indented-code` instead of CommonMark's continuation prose. Round-trip is unaffected (both roles pass through verbatim within a group); only matters if a future feature inspects the role tag for layout decisions.
+
+3. **Multi-space gap after a list marker is preserved verbatim.** `-   item` keeps its 3-space gap on round-trip rather than being canonicalized to a single space. Intentional, but may surprise users expecting normalization.
+
+4. **HTML block boundary is single-line only.** A `<div>` opener is tagged `html-block`; subsequent lines until `</div>` are classified by their own content. Common doc-style HTML (block tag surrounded by blanks) works; pathological inputs may see surrounding prose reflow into the HTML region.
+
+A real-world input that exposes one of these should land as a fixture in `test-fixtures/` before the underlying classifier is changed — naive fixes here cascade into the working cases.
