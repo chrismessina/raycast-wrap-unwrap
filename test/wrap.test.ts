@@ -103,3 +103,31 @@ test("wrap emits oversized token alone (no mid-word break)", () => {
 test("wrap handles empty input", () => {
   assert.equal(wrap("", W(80)), "");
 });
+
+test("wrap preserves trailing-space hard break", () => {
+  // Two trailing spaces are CommonMark's <br>; tokenize strips them, so the
+  // wrap path has to re-append the marker after fill.
+  const input = "line one  \nline two";
+  const out = wrap(input, W(80));
+  const lines = out.split("\n");
+  assert.equal(lines[0], "line one  ");
+  assert.equal(lines[1], "line two");
+});
+
+test("wrap preserves backslash hard break", () => {
+  const input = "line one\\\nline two";
+  const out = wrap(input, W(80));
+  const lines = out.split("\n");
+  assert.equal(lines[0], "line one\\");
+  assert.equal(lines[1], "line two");
+});
+
+test("wrap places hard-break marker on last filled line", () => {
+  // When the hard-break-terminated paragraph wraps across multiple lines,
+  // the marker lands on the LAST emitted line, not the original.
+  const input = "alpha beta gamma delta epsilon  ";
+  const out = wrap(input, W(20));
+  const lines = out.split("\n");
+  // Greedy: "alpha beta gamma" (16), overflow "delta" → "delta epsilon" → "delta epsilon  ".
+  assert.equal(lines[lines.length - 1], "delta epsilon  ");
+});

@@ -112,15 +112,34 @@ export function wrap(text: string, opts: WrapOptions): string {
     }
     i = j;
 
+    // The classifier already detected any hard-break marker on the final line
+    // and stored it in endsWithHardBreak. Strip it from combined before fill
+    // (tokenization would drop trailing spaces anyway, and a trailing backslash
+    // would otherwise cling to the last token), then re-append it to the last
+    // emitted line.
+    const hardBreakSuffix =
+      endsWithHardBreak === "spaces"
+        ? "  "
+        : endsWithHardBreak === "backslash"
+          ? "\\"
+          : "";
+    const fillInput =
+      hardBreakSuffix.length > 0
+        ? combined.slice(0, combined.length - hardBreakSuffix.length)
+        : combined;
+
     // Protect inline tokens, tokenize, fill, restore.
-    const { protected: prot, tokens } = protectInline(combined);
+    const { protected: prot, tokens } = protectInline(fillInput);
     const wordTokens = tokenizeContent(prot);
     const firstBudget = Math.max(1, width - firstPrefix.length);
     const contBudget = Math.max(1, width - contPrefix.length);
     const filled = greedyFill(wordTokens, firstBudget, contBudget);
+    const lastIdx = filled.length - 1;
     const lines = filled.map((line, idx) => {
       const restored = restoreInline(line, tokens);
-      return idx === 0 ? firstPrefix + restored : contPrefix + restored;
+      const prefix = idx === 0 ? firstPrefix : contPrefix;
+      const suffix = idx === lastIdx ? hardBreakSuffix : "";
+      return prefix + restored + suffix;
     });
     out.push(...lines);
   }
