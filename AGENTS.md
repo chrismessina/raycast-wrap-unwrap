@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to coding agents (Claude Code, Codex, Cursor, etc.) when working with code in this repository.
 
 ## Project
 
@@ -10,8 +10,6 @@ Raycast extension ("Wrap Unwrap") that wraps and unwraps text with Markdown awar
 - `unwrap-text` (`src/unwrap-text.ts`) — Unwrap Text. Reflows wrapped text into single lines, preserving Markdown structure.
 
 Both commands share the Change Case-style preferences: **Preferred Source** (selection vs clipboard), **Primary Action** (paste vs copy), **Hide HUD**, **Pop to Root**. Wrap adds **Wrap Column**. Unwrap adds **Strip Soft Hyphens** and **Keep Blank Lines**.
-
-The spec is at `docs/superpowers/specs/2026-04-25-wrap-unwrap-design.md`. The implementation plan is at `docs/superpowers/plans/2026-04-25-wrap-unwrap-v1.md`.
 
 ## Commands
 

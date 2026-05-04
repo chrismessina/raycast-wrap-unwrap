@@ -1,4 +1,3 @@
-// src/lib/pipeline.ts
 import {
   Clipboard,
   Toast,
@@ -55,8 +54,11 @@ async function getSelection(): Promise<string> {
 export async function readContent(
   preferredSource: "selection" | "clipboard",
 ): Promise<string> {
-  const clipboard = (await Clipboard.readText()) ?? "";
-  const selected = await getSelection();
+  const [clipboardRaw, selected] = await Promise.all([
+    Clipboard.readText(),
+    getSelection(),
+  ]);
+  const clipboard = clipboardRaw ?? "";
   if (preferredSource === "clipboard") {
     if (clipboard) return clipboard;
     if (selected) return selected;
@@ -88,6 +90,29 @@ export async function failureToast(
       },
     },
   });
+}
+
+/** Maps known error classes to user-facing failure toasts; falls back to `fallbackTitle`. */
+export async function reportFailure(
+  error: unknown,
+  fallbackTitle: string,
+): Promise<void> {
+  if (error instanceof NoTextError) {
+    await failureToast(
+      "No text available",
+      "Select text or copy it to the clipboard.",
+    );
+    return;
+  }
+  if (error instanceof OversizeError) {
+    await failureToast(
+      "Text exceeds 1MB limit",
+      "Use a text editor for documents this large.",
+    );
+    return;
+  }
+  const message = error instanceof Error ? error.message : "Unknown error";
+  await failureToast(fallbackTitle, message);
 }
 
 export type DeliveryPrefs = {

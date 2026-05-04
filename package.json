@@ -8,6 +8,7 @@
   "icon": "extension-icon.png",
   "platforms": ["macOS"],
   "categories": ["Productivity"],
+  "keywords": ["markdown", "reflow", "wrap", "unwrap", "format", "text", "prose", "fold"],
   "scripts": {
     "dev": "ray develop",
     "lint": "ray lint",
@@ -78,7 +79,6 @@
     {
       "name": "wrap-text",
       "title": "Wrap Text",
-      "subtitle": "Wrap Unwrap",
       "description": "Wrap text at a configurable column width.",
       "mode": "no-view",
       "preferences": [
@@ -96,7 +96,6 @@
     {
       "name": "unwrap-text",
       "title": "Unwrap Text",
-      "subtitle": "Wrap Unwrap",
       "description": "Reflow wrapped text into continuous paragraphs while preserving Markdown structure.",
       "mode": "no-view",
       "preferences": [
