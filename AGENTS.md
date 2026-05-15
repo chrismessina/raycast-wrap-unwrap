@@ -9,7 +9,7 @@ Raycast extension ("Wrap Unwrap") that wraps and unwraps text with Markdown awar
 - `wrap-text` (`src/wrap-text.ts`) — Wrap Text. Wraps lines at a configurable column width, prefix-aware (blockquote `> `, list-item `- ` + hang count toward the budget).
 - `unwrap-text` (`src/unwrap-text.ts`) — Unwrap Text. Reflows wrapped text into single lines, preserving Markdown structure.
 
-Both commands share the Change Case-style preferences: **Preferred Source** (selection vs clipboard), **Primary Action** (paste vs copy), **Hide HUD**, **Pop to Root**. Wrap adds **Wrap Column**. Unwrap adds **Strip Soft Hyphens** and **Keep Blank Lines**.
+Both commands share the Change Case-style preferences: **Preferred Source** (selection vs clipboard), **Primary Action** (paste vs copy), **Hide HUD**, **Pop to Root**. Wrap adds **Wrap Column**. Unwrap adds **Strip Soft Hyphens**, **Keep Blank Lines**, and **Strip Bullet Indentation**.
 
 ## Commands
 
@@ -34,7 +34,7 @@ src/
     inline.ts             # protectInline / restoreInline — atomic placeholders for code spans, links, autolinks
     regex.ts              # named regex constants used by the classifier
     wrap.ts               # wrap(text, { width })
-    unwrap.ts             # unwrap(text, { hyphenation, keepBlankLines })
+    unwrap.ts             # unwrap(text, { hyphenation, keepBlankLines, flattenBullets })
 
 test/                     # node:test unit tests, one file per pure module
 test-fixtures/            # 14 manual evaluation fixtures for `npm run dev`
