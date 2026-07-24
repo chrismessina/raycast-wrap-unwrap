@@ -1,11 +1,11 @@
 import { getPreferenceValues } from "@raycast/api";
 import {
-  type BaseLaunchContext,
   deliver,
   guardSize,
   parseWidth,
   readContent,
   reportFailure,
+  type BaseLaunchContext,
   type LaunchProps,
 } from "./lib/pipeline.js";
 import { wrap } from "./lib/wrap.js";

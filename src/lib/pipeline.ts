@@ -1,4 +1,4 @@
-import { Clipboard, Toast, getSelectedText, launchCommand, popToRoot, showHUD, showToast } from "@raycast/api";
+import { Clipboard, getSelectedText, launchCommand, popToRoot, showHUD, showToast, Toast } from "@raycast/api";
 import type { LaunchProps, LaunchType } from "@raycast/api";
 
 export const MAX_INPUT = 1_000_000;

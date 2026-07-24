@@ -1,10 +1,10 @@
 import { getPreferenceValues } from "@raycast/api";
 import {
-  type BaseLaunchContext,
   deliver,
   guardSize,
   readContent,
   reportFailure,
+  type BaseLaunchContext,
   type LaunchProps,
 } from "./lib/pipeline.js";
 import { unwrap } from "./lib/unwrap.js";
