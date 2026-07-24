@@ -23,13 +23,21 @@ function emitPrefix(prefixes: Classified["prefixes"]): string {
   return prefixes.map((p) => (p.spaceAfter ? "> " : ">")).join("");
 }
 
-function joinWithHyphenation(
-  prior: string,
-  next: string,
-  hyphenation: boolean,
-): string {
-  if (hyphenation && HYPHEN_BREAK_END.test(prior) && /^[a-z]/.test(next)) {
-    return prior.slice(0, -1) + next;
+function joinWithHyphenation(prior: string, next: string, hyphenation: boolean): string {
+  // A hyphen at the line break immediately followed by a letter is a
+  // word-internal break (soft-wrap hyphen OR a real compound like "well-known"
+  // that happened to break here). Either way the two halves belong to the same
+  // word, so they rejoin with NO space — never "well- known" / "inter- esting".
+  const brokenAcrossHyphen = prior.endsWith("-") && /^[A-Za-z]/.test(next);
+  if (brokenAcrossHyphen) {
+    // Strip the hyphen only when it looks like a *soft* line-break hyphen AND the
+    // user opted in. HYPHEN_BREAK_END deliberately excludes hyphen chains
+    // (e.g. "state-of-the-") so stripping never mashes a real compound.
+    if (hyphenation && HYPHEN_BREAK_END.test(prior) && /^[a-z]/.test(next)) {
+      return prior.slice(0, -1) + next;
+    }
+    // Otherwise keep the hyphen, but still join with no space.
+    return prior + next;
   }
   return prior + " " + next;
 }
@@ -54,8 +62,7 @@ function emitGroup(g: Group): string {
     const indent = g.header.listIndent ?? "";
     const marker = g.header.listMarker ?? "-";
     const gap = g.header.listGap ?? " ";
-    const taskPrefix =
-      g.header.taskState !== undefined ? `[${g.header.taskState}] ` : "";
+    const taskPrefix = g.header.taskState !== undefined ? `[${g.header.taskState}] ` : "";
     return `${prefix}${indent}${marker}${gap}${taskPrefix}${g.joined}`;
   }
   return prefix + g.joined;
@@ -67,9 +74,7 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
     recognizeDashBullets: opts.flattenBullets,
   });
 
-  type Output =
-    | { kind: "group"; group: Group }
-    | { kind: "blank"; rawPrefix: string };
+  type Output = { kind: "group"; group: Group } | { kind: "blank"; rawPrefix: string };
   const output: Output[] = [];
 
   let current: Group | null = null;
@@ -108,19 +113,13 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
 
     // rec is prose or list-item. Decide: continue current group, or start new.
     let canContinue = false;
-    if (
-      current &&
-      samePrefixStack(rec, current.header) &&
-      !current.endHardBreak
-    ) {
+    if (current && samePrefixStack(rec, current.header) && !current.endHardBreak) {
       if (rec.role === "list-item") {
         // A new list-item starts a new group, even if same prefix.
         canContinue = false;
       } else {
         // rec is prose. Continue if header is prose, or list-item (continuation).
-        canContinue =
-          current.header.role === "prose" ||
-          current.header.role === "list-item";
+        canContinue = current.header.role === "prose" || current.header.role === "list-item";
       }
     }
 
@@ -131,11 +130,7 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
       // Continuation lines: strip leading whitespace (indentation is presentation,
       // not content — e.g. list-item hang-indent continuation).
       const continuation = rec.content.replace(/^\s+/, "");
-      current!.joined = joinWithHyphenation(
-        current!.joined,
-        continuation,
-        opts.hyphenation,
-      );
+      current!.joined = joinWithHyphenation(current!.joined, continuation, opts.hyphenation);
     }
 
     if (rec.hardBreak) {
@@ -159,9 +154,7 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
         }
       }
       if (headers.length === 0) return;
-      const widths = [
-        ...new Set(headers.map((h) => (h.listIndent ?? "").length)),
-      ].sort((a, b) => a - b);
+      const widths = [...new Set(headers.map((h) => (h.listIndent ?? "").length))].sort((a, b) => a - b);
       const rankOf = new Map(widths.map((w, rank) => [w, rank]));
       for (const h of headers) {
         const rank = rankOf.get((h.listIndent ?? "").length) ?? 0;
@@ -170,10 +163,7 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
     };
     for (let i = 0; i < output.length; i++) {
       const o = output[i];
-      const isListGroup =
-        o.kind === "group" &&
-        !o.group.passthrough &&
-        o.group.header.role === "list-item";
+      const isListGroup = o.kind === "group" && !o.group.passthrough && o.group.header.role === "list-item";
       if (!isListGroup) {
         reindentBlock(blockStart, i);
         blockStart = i + 1;
@@ -188,11 +178,7 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
     const o = output[i];
     if (o.kind === "blank") {
       // Collapse runs unless keepBlankLines is on.
-      if (
-        !opts.keepBlankLines &&
-        lines.length > 0 &&
-        lines[lines.length - 1] === ""
-      ) {
+      if (!opts.keepBlankLines && lines.length > 0 && lines[lines.length - 1] === "") {
         continue;
       }
       lines.push("");
@@ -207,11 +193,7 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
   }
 
   // Trim trailing blank line if we ended on one.
-  while (
-    lines.length > 0 &&
-    lines[lines.length - 1] === "" &&
-    !opts.keepBlankLines
-  ) {
+  while (lines.length > 0 && lines[lines.length - 1] === "" && !opts.keepBlankLines) {
     lines.pop();
   }
 
