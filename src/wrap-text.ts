@@ -14,13 +14,10 @@ type WrapContext = BaseLaunchContext & {
   width?: number;
 };
 
-export default async function Command(
-  props: LaunchProps<{ launchContext?: WrapContext }>,
-) {
+export default async function Command(props: LaunchProps<{ launchContext?: WrapContext }>) {
   const prefs = getPreferenceValues<Preferences.WrapText>();
   try {
-    const input =
-      props.launchContext?.text ?? (await readContent(prefs.source));
+    const input = props.launchContext?.text ?? (await readContent(prefs.source));
     guardSize(input);
     const width = props.launchContext?.width ?? parseWidth(prefs.width);
     const result = wrap(input, { width });

@@ -100,9 +100,7 @@ type ClassifyOptions = {
   recognizeDashBullets?: boolean;
 };
 
-function classifyFenceBoundary(
-  content: string,
-): { fenceChar: "`" | "~"; fenceLen: number } | null {
+function classifyFenceBoundary(content: string): { fenceChar: "`" | "~"; fenceLen: number } | null {
   const m = content.match(FENCE_BOUNDARY);
   if (!m) return null;
   const run = m[1];
@@ -216,10 +214,7 @@ function applyTablePass(records: Classified[]): void {
 
     // Case A: cur is the header — next line is a separator at same depth.
     const next = records[i + 1];
-    const nextIsSeparator =
-      next &&
-      next.prefixes.length === cur.prefixes.length &&
-      TABLE_SEPARATOR.test(next.content);
+    const nextIsSeparator = next && next.prefixes.length === cur.prefixes.length && TABLE_SEPARATOR.test(next.content);
 
     // Case B: cur is itself a separator.
     const curIsSeparator = TABLE_SEPARATOR.test(cur.content);
@@ -253,10 +248,7 @@ function applyHardBreakPass(records: Classified[]): void {
   }
 }
 
-export function classify(
-  text: string,
-  opts: ClassifyOptions = {},
-): Classified[] {
+export function classify(text: string, opts: ClassifyOptions = {}): Classified[] {
   const classifyOpts = { recognizeDashBullets: false, ...opts };
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const out: Classified[] = [];
@@ -349,9 +341,7 @@ export function classify(
           .reverse()
           .find(({ c }) => c.role === "blank")?.i ?? -1;
       const sinceBlank = out.slice(lastBlankIdx + 1);
-      const inListContext = sinceBlank.some(
-        (c) => c.role === "list-item" && c.prefixes.length === prefixes.length,
-      );
+      const inListContext = sinceBlank.some((c) => c.role === "list-item" && c.prefixes.length === prefixes.length);
       out.push({
         prefixes,
         role: inListContext ? "prose" : "indented-code",

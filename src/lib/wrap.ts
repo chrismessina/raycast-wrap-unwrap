@@ -30,11 +30,7 @@ function listItemContPrefix(rec: Classified): string {
 }
 
 /** Greedy word fill — returns lines (without prefixes). Tokens are joined with single spaces. */
-function greedyFill(
-  tokens: string[],
-  firstBudget: number,
-  contBudget: number,
-): string[] {
+function greedyFill(tokens: string[], firstBudget: number, contBudget: number): string[] {
   if (tokens.length === 0) return [""];
   const lines: string[] = [];
   let cur = tokens[0];
@@ -60,8 +56,7 @@ function tokenizeContent(content: string): string[] {
 
 export function wrap(text: string, opts: WrapOptions): string {
   if (text === "") return "";
-  const widthRaw =
-    Number.isFinite(opts.width) && opts.width > 0 ? opts.width : 80;
+  const widthRaw = Number.isFinite(opts.width) && opts.width > 0 ? opts.width : 80;
   const width = Math.max(MIN_WIDTH, widthRaw);
 
   const records = classify(text);
@@ -117,16 +112,9 @@ export function wrap(text: string, opts: WrapOptions): string {
     // (tokenization would drop trailing spaces anyway, and a trailing backslash
     // would otherwise cling to the last token), then re-append it to the last
     // emitted line.
-    const hardBreakSuffix =
-      endsWithHardBreak === "spaces"
-        ? "  "
-        : endsWithHardBreak === "backslash"
-          ? "\\"
-          : "";
+    const hardBreakSuffix = endsWithHardBreak === "spaces" ? "  " : endsWithHardBreak === "backslash" ? "\\" : "";
     const fillInput =
-      hardBreakSuffix.length > 0
-        ? combined.slice(0, combined.length - hardBreakSuffix.length)
-        : combined;
+      hardBreakSuffix.length > 0 ? combined.slice(0, combined.length - hardBreakSuffix.length) : combined;
 
     // Protect inline tokens, tokenize, fill, restore.
     const { protected: prot, tokens } = protectInline(fillInput);

@@ -9,22 +9,17 @@ test("wrap returns short input unchanged", () => {
 });
 
 test("wrap respects column budget on plain prose", () => {
-  const input =
-    "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
+  const input = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
   const out = wrap(input, W(20));
   for (const line of out.split("\n")) {
-    assert.ok(
-      line.length <= 20,
-      `line too long: ${line.length} chars: ${JSON.stringify(line)}`,
-    );
+    assert.ok(line.length <= 20, `line too long: ${line.length} chars: ${JSON.stringify(line)}`);
   }
   // round trip: joining lines with a space gives back the input
   assert.equal(out.split("\n").join(" "), input);
 });
 
 test("wrap leaves fenced code untouched even when long", () => {
-  const longCode =
-    "this_is_a_very_long_line_inside_a_code_fence_that_should_not_be_wrapped";
+  const longCode = "this_is_a_very_long_line_inside_a_code_fence_that_should_not_be_wrapped";
   const input = "```\n" + longCode + "\n```";
   const out = wrap(input, W(40));
   assert.ok(out.includes(longCode));
@@ -41,10 +36,7 @@ test("wrap respects width INCLUDING blockquote prefix", () => {
   const out = wrap(input, W(20));
   for (const line of out.split("\n")) {
     assert.ok(line.length <= 20, `line too long: ${JSON.stringify(line)}`);
-    assert.ok(
-      line.startsWith("> "),
-      `lost quote prefix: ${JSON.stringify(line)}`,
-    );
+    assert.ok(line.startsWith("> "), `lost quote prefix: ${JSON.stringify(line)}`);
   }
 });
 
@@ -58,10 +50,7 @@ test("wrap respects width INCLUDING list marker + hang", () => {
   // First line starts with "- "; continuations indent 2 spaces.
   assert.ok(lines[0].startsWith("- "));
   for (let i = 1; i < lines.length; i++) {
-    assert.ok(
-      lines[i].startsWith("  "),
-      `continuation lacks hang: ${JSON.stringify(lines[i])}`,
-    );
+    assert.ok(lines[i].startsWith("  "), `continuation lacks hang: ${JSON.stringify(lines[i])}`);
   }
 });
 
@@ -79,8 +68,7 @@ test("wrap never breaks inside an inline link", () => {
 });
 
 test("wrap with width<20 clamps to 20", () => {
-  const input =
-    "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
+  const input = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
   const out = wrap(input, { width: 5 });
   for (const line of out.split("\n")) {
     assert.ok(line.length <= 20, `line too long: ${line.length}`);
@@ -95,10 +83,7 @@ test("wrap emits oversized token alone (no mid-word break)", () => {
   assert.ok(out.includes(tok));
   for (const line of out.split("\n")) {
     if (!line.includes(tok)) {
-      assert.ok(
-        line.length <= 20,
-        `non-oversized line too long: ${JSON.stringify(line)}`,
-      );
+      assert.ok(line.length <= 20, `non-oversized line too long: ${JSON.stringify(line)}`);
     }
   }
 });

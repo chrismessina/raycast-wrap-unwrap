@@ -1,12 +1,4 @@
-import {
-  Clipboard,
-  Toast,
-  getSelectedText,
-  launchCommand,
-  popToRoot,
-  showHUD,
-  showToast,
-} from "@raycast/api";
+import { Clipboard, Toast, getSelectedText, launchCommand, popToRoot, showHUD, showToast } from "@raycast/api";
 import type { LaunchProps, LaunchType } from "@raycast/api";
 
 export const MAX_INPUT = 1_000_000;
@@ -51,13 +43,8 @@ async function getSelection(): Promise<string> {
  * Read input from the user's preferred source, falling back to the other.
  * Throws `NoTextError` if neither has text.
  */
-export async function readContent(
-  preferredSource: "selection" | "clipboard",
-): Promise<string> {
-  const [clipboardRaw, selected] = await Promise.all([
-    Clipboard.readText(),
-    getSelection(),
-  ]);
+export async function readContent(preferredSource: "selection" | "clipboard"): Promise<string> {
+  const [clipboardRaw, selected] = await Promise.all([Clipboard.readText(), getSelection()]);
   const clipboard = clipboardRaw ?? "";
   if (preferredSource === "clipboard") {
     if (clipboard) return clipboard;
@@ -75,10 +62,7 @@ export function guardSize(input: string): void {
 }
 
 /** Toast for any failure path. ALWAYS includes Copy Error primaryAction. */
-export async function failureToast(
-  title: string,
-  message: string,
-): Promise<void> {
+export async function failureToast(title: string, message: string): Promise<void> {
   await showToast({
     style: Toast.Style.Failure,
     title,
@@ -93,22 +77,13 @@ export async function failureToast(
 }
 
 /** Maps known error classes to user-facing failure toasts; falls back to `fallbackTitle`. */
-export async function reportFailure(
-  error: unknown,
-  fallbackTitle: string,
-): Promise<void> {
+export async function reportFailure(error: unknown, fallbackTitle: string): Promise<void> {
   if (error instanceof NoTextError) {
-    await failureToast(
-      "No text available",
-      "Select text or copy it to the clipboard.",
-    );
+    await failureToast("No text available", "Select text or copy it to the clipboard.");
     return;
   }
   if (error instanceof OversizeError) {
-    await failureToast(
-      "Text exceeds 1MB limit",
-      "Use a text editor for documents this large.",
-    );
+    await failureToast("Text exceeds 1MB limit", "Use a text editor for documents this large.");
     return;
   }
   const message = error instanceof Error ? error.message : "Unknown error";
