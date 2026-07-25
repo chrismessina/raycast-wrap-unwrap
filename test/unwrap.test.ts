@@ -309,3 +309,9 @@ test("unwrap ignores escaped inline delimiters when deciding a join", () => {
   assert.equal(unwrap("literal \\`tick word-\nnext", dflt), "literal \\`tick word-next");
   assert.equal(unwrap("literal \\](x word-\nnext", dflt), "literal \\](x word-next");
 });
+
+test("unwrap merges a blockquote whose marker indent varies within 0-3 spaces", () => {
+  // CommonMark allows 0-3 spaces before a quote marker, so these are one quote.
+  assert.equal(unwrap(" > alpha beta\n  > gamma delta", dflt), " > alpha beta gamma delta");
+  assert.equal(unwrap("> alpha\n   > beta", dflt), "> alpha beta");
+});

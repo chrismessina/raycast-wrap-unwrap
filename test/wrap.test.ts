@@ -252,3 +252,35 @@ test("nested-paren link pattern has no catastrophic backtracking", () => {
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
   assert.ok(elapsedMs < 1000, `adversarial paren input took ${elapsedMs.toFixed(0)}ms`);
 });
+
+test("wrap never leaves a trailing token that would re-parse as a block", () => {
+  // The severe case is data LOSS: a lone ">" on its own line re-reads as an empty
+  // blockquote and the token disappears. "---"/"===" become setext underlines.
+  const u = { hyphenation: true, keepBlankLines: false, flattenBullets: false };
+  for (const input of [
+    "alpha bravo charlie >",
+    "alpha bravo charlie ---",
+    "alpha bravo charlie ===",
+    "alpha bravo charlie >quoted",
+  ]) {
+    const wrapped = wrap(input, { width: 20 });
+    assert.equal(unwrap(wrapped, u), input, `round trip lost content: ${JSON.stringify(wrapped)}`);
+  }
+});
+
+test("the new-block guard does not fire on em/en dashes in prose", () => {
+  // `recognizeDashBullets` is false for wrap(), so "—" is prose — treating it as a
+  // bullet made every dash bypass the width budget (a 100k-char line at width 20).
+  const input = "alpha " + "— ".repeat(2000) + "omega";
+  const out = wrap(input, { width: 20 });
+  const longest = Math.max(...out.split("\n").map((l) => l.length));
+  assert.ok(longest <= 20, `guard bypassed the budget: longest line ${longest}`);
+});
+
+test("wrap stays linear despite per-token block probing", () => {
+  const words = Array.from({ length: 80_000 }, (_, i) => `word${i}`).join(" ");
+  const started = process.hrtime.bigint();
+  wrap(words, { width: 80 });
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 2000, `wrap took ${elapsedMs.toFixed(0)}ms — per-token cost regressed`);
+});

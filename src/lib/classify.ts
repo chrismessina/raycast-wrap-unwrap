@@ -8,7 +8,6 @@ import {
   HARD_BREAK_SPACES,
   HEADING_ATX,
   HR,
-  indentColumns,
   isIndentedCode,
   LINK_REF_DEF,
   LIST_ITEM,
@@ -50,6 +49,13 @@ export type Classified = {
   content: string;
   /** Exact prefix string as it appeared in the input — used for round-trip emission. */
   rawPrefix: string;
+  /**
+   * True when this line is indented under a list item that was still open (no
+   * intervening blank line). Distinguishes a list-nested blockquote from a
+   * root-level one, which indent width alone cannot do — 0-3 spaces before a `>` is
+   * legal padding at root.
+   */
+  inListContext?: boolean;
   // role-specific extras:
   listMarker?: string;
   hangIndent?: number;
@@ -80,19 +86,13 @@ export function samePrefixStack(a: Classified, b: Classified): boolean {
   for (let i = 0; i < a.prefixes.length; i++) {
     if (a.prefixes[i].marker !== b.prefixes[i].marker) return false;
   }
-  // Indentation BEFORE the markers is structural: `   > x` is a quote nested inside
-  // a list item, while `> x` is a root-level quote. The frame list records only
-  // depth, so without this a list-contained quote merged with a following
-  // root-level one. Compare the indent columns, not the raw text, so a tab and
-  // four spaces at the same visual depth still group.
-  return quoteIndentColumns(a) === quoteIndentColumns(b);
-}
-
-/** Display width of the whitespace preceding a record's first quote marker. */
-function quoteIndentColumns(rec: Classified): number {
-  if (rec.prefixes.length === 0) return 0;
-  const lead = rec.rawPrefix.match(/^[ \t]*/);
-  return lead ? indentColumns(lead[0]) : 0;
+  // A quote indented under an open list item is a DIFFERENT block from a root-level
+  // quote at the same depth, even when both indents fall inside CommonMark's allowed
+  // 0-3 spaces before a marker (`   > x` under `1. outer` vs a following `> x`).
+  // Indent width alone can't tell them apart — 3 spaces is legal marker padding at
+  // root — so the classifier records whether a list was open, and that is what's
+  // compared. Plain varying padding (` > a` / `  > b`) still merges.
+  return a.inListContext === b.inListContext;
 }
 
 function peelBlockquotes(line: string): {
@@ -304,6 +304,12 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
       listDepthsSinceBlank.clear();
     } else if (rec.role === "list-item") {
       listDepthsSinceBlank.add(rec.prefixes.length);
+    } else if (rec.prefixes.length > 0 && listDepthsSinceBlank.size > 0 && /^[ \t]/.test(rec.rawPrefix)) {
+      // An INDENTED BLOCKQUOTE under an open list item belongs to that item's block,
+      // not to a root-level quote. Scoped to quote records on purpose: tagging every
+      // indented line would also split ordinary list-item continuations from their
+      // item, which must keep reflowing together.
+      rec.inListContext = true;
     }
     out.push(rec);
   };

@@ -11,7 +11,8 @@
 - Fix a fenced code block being ended early by a line that looks like a closer but carries an info string, which exposed the block's contents to reflow.
 - Fix tab-indented code being treated as prose and reflowed, losing its indentation. Indent width is now measured in columns, so any mix of tabs and spaces reaching column 4 is recognized.
 - Fix **Wrap Text** overrunning the requested **Wrap Column** on tab-indented lines — a tab was counted as one character rather than the four columns it occupies.
-- Fix **Wrap Text** breaking a line so that it began with a literal `-`, `#`, or ` ``` `, which was then re-read as a new list item, heading, or code fence and changed the document's structure.
+- Fix **Wrap Text** breaking a line so that it began with a literal `-`, `#`, ` ``` `, `>`, or `---`, which was then re-read as a new list item, heading, code fence, blockquote, or heading underline. In the `>` case the character was **deleted outright** on the next unwrap.
+- Fix **Unwrap Text** splitting a single blockquote whose `>` markers were indented inconsistently — CommonMark allows up to three spaces before the marker, so those lines belong to the same quote.
 - Fix a link whose URL contains balanced parentheses being split across lines by **Wrap Text**.
 - Fix **Unwrap Text** merging a blockquote nested inside a list item with a following top-level blockquote — indentation before the `>` marker is structural, not decoration.
 - Fix **Unwrap Text** mis-handling a backslash-escaped `` ` `` or `](`, which was read as opening real inline code or a link and suppressed the correct hyphen rejoining.

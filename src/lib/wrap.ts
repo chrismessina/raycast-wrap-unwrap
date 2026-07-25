@@ -1,7 +1,7 @@
 // src/lib/wrap.ts
 import { classify, samePrefixStack, type Classified } from "./classify.js";
 import { protectInline, restoreInline } from "./inline.js";
-import { FENCE_BOUNDARY, HEADING_ATX, LIST_ITEM } from "./regex.js";
+import { SETEXT_UNDERLINE } from "./regex.js";
 
 export type WrapOptions = {
   width: number;
@@ -65,13 +65,31 @@ function prefixColumns(prefix: string): number {
  * True when starting a wrapped line with this token would make the line parse as
  * something other than continuation prose.
  *
- * A literal `-` mid-sentence is the real case: breaking before it emits
- * `"      - delta"`, which re-reads as a NESTED LIST ITEM and breaks the round trip.
- * Keeping the token on the previous line (slightly overrunning the width) is the
- * lesser evil versus corrupting the structure.
+ * A literal `-` mid-sentence is the motivating case: breaking before it emits
+ * `"      - delta"`, which re-reads as a NESTED LIST ITEM. Worse, a trailing `>`
+ * re-reads as an empty blockquote and the token is DELETED outright, and `---`
+ * becomes a setext underline. Keeping the token on the previous line (overrunning
+ * the width) is the lesser evil versus corrupting or losing content.
+ *
+ * The check asks the CLASSIFIER whether a line consisting of this token plus some
+ * prose would still be prose — rather than hand-listing constructs, which is how
+ * blockquote and setext were missed the first time.
  */
 function wouldStartNewBlock(token: string): boolean {
-  return LIST_ITEM.test(`${token} x`) || HEADING_ATX.test(token) || FENCE_BOUNDARY.test(token);
+  // `recognizeDashBullets` must match what wrap() itself passes to classify (the
+  // default, false), or `—`/`–` are treated as bullets here while ordinary
+  // classification calls them prose — bypassing the budget for every em-dash.
+  const [probe] = classify(`${token} x`);
+  if (probe === undefined) return false;
+  // A blockquote marker keeps role "prose" (the role describes the content INSIDE the
+  // quote), so the peeled prefix has to be checked separately. A bare ">" is the
+  // dangerous case: it re-reads as an empty quote and the token is dropped entirely.
+  if (probe.prefixes.length > 0) return true;
+  if (probe.role !== "prose") return true;
+  // A prose line can still be retagged by the setext pass, which needs the FOLLOWING
+  // line to decide. `---`/`===` alone classify as `hr`/`prose` depending on length,
+  // so test the underline shape directly.
+  return SETEXT_UNDERLINE.test(token);
 }
 
 /** Greedy word fill — returns lines (without prefixes). Tokens are joined with single spaces. */
