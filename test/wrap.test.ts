@@ -301,3 +301,19 @@ test("no trailing block-construct token survives a wrap with lost or changed str
     }
   }
 });
+
+test("wrap does not synthesize a block from MULTIPLE continuation tokens", () => {
+  // `_` alone is prose and `___` alone is held back, but a line "_ ___" is a
+  // horizontal rule — a per-token check cannot see the combination.
+  const u = { hyphenation: true, keepBlankLines: false, flattenBullets: false };
+  for (const input of ["alpha bravo charlie _ ___", "alpha bravo charlie - - -", "alpha bravo charlie * * *"]) {
+    assert.equal(unwrap(wrap(input, { width: 20 }), u), input, `synthesized a block: ${JSON.stringify(input)}`);
+  }
+});
+
+test("wrap only overruns the width when the resulting line is genuinely unsafe", () => {
+  // "*** delta" is prose, so the break is safe and must be taken — holding "***"
+  // back to avoid a bare-HR line overran the column for no reason.
+  const out = wrap("alpha bravo charlie *** delta", { width: 20 });
+  assert.equal(out, "alpha bravo charlie\n*** delta");
+});

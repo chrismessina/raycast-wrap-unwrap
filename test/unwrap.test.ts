@@ -335,3 +335,12 @@ test("a quote nested in a list inside a quote stays distinct from the outer root
     "> - item\n>   > alpha beta\n> > gamma delta",
   );
 });
+
+test("the governing list item is the most recent one, not the narrowest sibling", () => {
+  // A narrow earlier marker ("1. ", column 3) must not lower the bar for a later
+  // wide one ("123456789. ", column 11): the 3-space quote is root-level there.
+  assert.equal(
+    unwrap("1. short\n123456789. wide\n   > alpha beta\n> gamma delta", dflt),
+    "1. short\n123456789. wide\n   > alpha beta gamma delta",
+  );
+});

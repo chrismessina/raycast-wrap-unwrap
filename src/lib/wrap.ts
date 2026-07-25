@@ -80,7 +80,8 @@ function prefixColumns(prefix: string): number {
  * while a bare `"***"` is a horizontal rule, and `"> x"` is a quote while a bare
  * `">"` is an empty one.
  */
-function wouldStartNewBlock(token: string): boolean {
+function wouldStartNewBlock(lineText: string): boolean {
+  const token = lineText;
   // `recognizeDashBullets` must match what wrap() itself passes to classify (the
   // default, false), or `—`/`–` are treated as bullets here while ordinary
   // classification calls them prose — bypassing the budget for every em-dash.
@@ -99,7 +100,14 @@ function wouldStartNewBlock(token: string): boolean {
   return SETEXT_UNDERLINE.test(token);
 }
 
-/** Greedy word fill — returns lines (without prefixes). Tokens are joined with single spaces. */
+/**
+ * Greedy word fill — returns lines (without prefixes), joined with single spaces.
+ *
+ * A break is only rejected when the line it would PRODUCE misparses. Testing the
+ * next token alone was wrong in both directions: `_` and `___` are individually
+ * harmless but together form the horizontal rule `_ ___`, and holding `***` back
+ * overran the width even when the safe suffix `*** delta` would have been fine.
+ */
 function greedyFill(tokens: string[], firstBudget: number, contBudget: number): string[] {
   if (tokens.length === 0) return [""];
   const lines: string[] = [];
@@ -107,20 +115,27 @@ function greedyFill(tokens: string[], firstBudget: number, contBudget: number): 
   let curBudget = firstBudget;
   for (let i = 1; i < tokens.length; i++) {
     const t = tokens[i];
-    // Never break so that a continuation line BEGINS with a token that would be
-    // re-parsed as a list marker, heading, or fence.
-    if (wouldStartNewBlock(t)) {
-      cur += " " + t;
-      continue;
-    }
     // +1 for the joining space.
     if (cur.length + 1 + t.length <= curBudget) {
       cur += " " + t;
-    } else {
-      lines.push(cur);
-      cur = t;
-      curBudget = contBudget;
+      continue;
     }
+    // The break would start a new line at token i. Reject it only if the resulting
+    // line parses as something other than prose; then keep the token here and
+    // overrun instead. Only the tokens that would actually LAND on that line are
+    // gathered — slicing all remaining tokens made this quadratic (1MB took 32s).
+    let probeLine = t;
+    for (let j = i + 1; j < tokens.length; j++) {
+      if (probeLine.length + 1 + tokens[j].length > contBudget) break;
+      probeLine += " " + tokens[j];
+    }
+    if (wouldStartNewBlock(probeLine)) {
+      cur += " " + t;
+      continue;
+    }
+    lines.push(cur);
+    cur = t;
+    curBudget = contBudget;
   }
   lines.push(cur);
   return lines;

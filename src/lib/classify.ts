@@ -327,10 +327,15 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
       listContentColumn.clear();
     } else if (rec.role === "list-item") {
       listDepthsSinceBlank.add(rec.prefixes.length);
-      const contentCol =
-        indentColumns(rec.listIndent ?? "") + (rec.listMarker ?? "").length + (rec.listGap ?? " ").length;
-      const prior = listContentColumn.get(rec.prefixes.length);
-      listContentColumn.set(rec.prefixes.length, prior === undefined ? contentCol : Math.min(prior, contentCol));
+      // The MOST RECENT item at this depth governs what counts as "inside a list
+      // item" for the lines that follow it. Keeping the minimum across siblings let a
+      // narrow earlier marker (`1. `, column 3) lower the bar for a later wide one
+      // (`123456789. `, column 11), so a 3-space quote under the wide item was marked
+      // list-nested when it is really a root-level quote.
+      listContentColumn.set(
+        rec.prefixes.length,
+        indentColumns(rec.listIndent ?? "") + (rec.listMarker ?? "").length + (rec.listGap ?? " ").length,
+      );
     } else if (rec.prefixes.length > 0) {
       // An INDENTED BLOCKQUOTE reaching an open list item's content column belongs to
       // that item's block, not to a root-level quote. Scoped to quote records on
