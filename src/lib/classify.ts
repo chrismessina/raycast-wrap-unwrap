@@ -8,6 +8,7 @@ import {
   HARD_BREAK_SPACES,
   HEADING_ATX,
   HR,
+  indentColumns,
   isIndentedCode,
   LINK_REF_DEF,
   LIST_ITEM,
@@ -117,6 +118,19 @@ function peelBlockquotes(line: string): {
 
 function isBlank(content: string): boolean {
   return /^\s*$/.test(content);
+}
+
+/**
+ * Columns of whitespace immediately before the LAST `>` in a raw prefix — i.e. how
+ * far the innermost quote marker is indented within its parent block. For `">   > "`
+ * that is 3, not 0: the inner marker sits three columns into the outer quote.
+ */
+function innerQuoteIndentColumns(rawPrefix: string): number {
+  const lastMarker = rawPrefix.lastIndexOf(">");
+  if (lastMarker === -1) return 0;
+  const beforeMarker = rawPrefix.slice(0, lastMarker);
+  const indent = beforeMarker.match(/[ \t]*$/);
+  return indent ? indentColumns(indent[0]) : 0;
 }
 
 type FenceState = { char: "`" | "~"; len: number } | null;
@@ -299,17 +313,37 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
    */
   const listDepthsSinceBlank = new Set<number>();
 
+  /**
+   * Per blockquote depth, the smallest content indent (in columns) of a list item
+   * open at that depth. A line must reach this column to be *inside* the item —
+   * testing merely "some list is open and this line starts with whitespace" marked a
+   * one-space root quote as list-nested under a wide marker like `123456789. `.
+   */
+  const listContentColumn = new Map<number, number>();
+
   const push = (rec: Classified): void => {
     if (rec.role === "blank") {
       listDepthsSinceBlank.clear();
+      listContentColumn.clear();
     } else if (rec.role === "list-item") {
       listDepthsSinceBlank.add(rec.prefixes.length);
-    } else if (rec.prefixes.length > 0 && listDepthsSinceBlank.size > 0 && /^[ \t]/.test(rec.rawPrefix)) {
-      // An INDENTED BLOCKQUOTE under an open list item belongs to that item's block,
-      // not to a root-level quote. Scoped to quote records on purpose: tagging every
-      // indented line would also split ordinary list-item continuations from their
-      // item, which must keep reflowing together.
-      rec.inListContext = true;
+      const contentCol =
+        indentColumns(rec.listIndent ?? "") + (rec.listMarker ?? "").length + (rec.listGap ?? " ").length;
+      const prior = listContentColumn.get(rec.prefixes.length);
+      listContentColumn.set(rec.prefixes.length, prior === undefined ? contentCol : Math.min(prior, contentCol));
+    } else if (rec.prefixes.length > 0) {
+      // An INDENTED BLOCKQUOTE reaching an open list item's content column belongs to
+      // that item's block, not to a root-level quote. Scoped to quote records on
+      // purpose: tagging every indented line would also split ordinary list-item
+      // continuations from their item, which must keep reflowing together.
+      //
+      // The indent measured is the whitespace before THIS quote's own marker, taken
+      // from the innermost frame — `>   > alpha` is indented under a list inside the
+      // outer quote, which looking only at the start of `rawPrefix` never saw.
+      const required = listContentColumn.get(rec.prefixes.length - 1);
+      if (required !== undefined && innerQuoteIndentColumns(rec.rawPrefix) >= required) {
+        rec.inListContext = true;
+      }
     }
     out.push(rec);
   };
