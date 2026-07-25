@@ -315,3 +315,23 @@ test("unwrap merges a blockquote whose marker indent varies within 0-3 spaces", 
   assert.equal(unwrap(" > alpha beta\n  > gamma delta", dflt), " > alpha beta gamma delta");
   assert.equal(unwrap("> alpha\n   > beta", dflt), "> alpha beta");
 });
+
+test("a quote is only list-nested if it reaches the item's content column", () => {
+  // "123456789. " puts content at column 11, so a one-space "> alpha" is a legal
+  // ROOT blockquote and must merge with the "> gamma" that follows.
+  assert.equal(
+    unwrap("123456789. item\n > alpha beta\n> gamma delta", dflt),
+    "123456789. item\n > alpha beta gamma delta",
+  );
+  // A 3-space quote under "1. " (content column 3) IS inside the item.
+  assert.equal(unwrap("1. outer\n   > alpha\n> beta", dflt), "1. outer\n   > alpha\n> beta");
+});
+
+test("a quote nested in a list inside a quote stays distinct from the outer root", () => {
+  // Prefix ">   > " is indented under the list item within the outer quote; looking
+  // only at the first character of the prefix never saw that.
+  assert.equal(
+    unwrap("> - item\n>   > alpha beta\n> > gamma delta", dflt),
+    "> - item\n>   > alpha beta\n> > gamma delta",
+  );
+});
