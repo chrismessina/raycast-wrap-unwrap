@@ -1,8 +1,9 @@
 # Handoff — wrap-unwrap (2026-07-25)
 
-**State: pre-flight complete and PUSHED to the mirror. One step remains — the Store PR,
-which is blocked on `gh` auth only.** See `.github/docs/RESUME-SHIP.md` for the exact
-commands; the fork-sync recipe there has been dry-run and validated.
+**State: SHIPPED — Store PR open at
+[raycast/extensions#29727](https://github.com/raycast/extensions/pull/29727).**
+16 files, base `raycast/extensions:main`, auto-labeled `extension: wrap-unwrap` /
+`OP is author`. Awaiting Raycast review.
 
 ## Current state (verified 2026-07-25)
 
@@ -14,13 +15,26 @@ commands; the fork-sync recipe there has been dry-run and validated.
 - **Working tree:** clean except `package-lock.json` (pre-existing dep drift) and
   untracked `.github/`.
 
-## THE ONE BLOCKER: `gh` auth
+## Two traps hit at submission time — read before the next ship
 
-Every `gh` call — including `gh auth status` and `gh config list`, which touch no network —
-returns `authorization timeout`. `~/.config/gh/hosts.yml` has no readable token and
-`credential.helper = manager`, so `gh` is waiting on a 1Password prompt nobody was there to
-approve. **SSH git works** (commit signing and the mirror push both succeeded) because that
-is the SSH agent, a different path. Unlock 1Password and `gh auth status` should return.
+**1. The fork's `main` is 26 commits ahead of upstream**, carrying Chris's own
+`.github/workflows/dispatch-sync.yml` and three `extensions/threads/` files. Branching from
+the fork put all four into the Store PR. Fixed by rebuilding the branch from **upstream**
+`raycast/extensions:main` rather than the fork, then force-pushing. Always branch from
+upstream, and always check `gh api .../pulls/<N>/files` — `changed_files` alone looked
+plausible (20 vs the expected 16).
+
+**2. `.prettierrc` must SHIP.** It was excluded as "local-only" based on wrap-unwrap's
+current published file set — but the published `reader-mode`, `fathom`, and `digger` all
+carry one, and without it `ray lint` on the shipped tree FAILS (upstream defaults to
+printWidth 80; the fleet standard is 120). Ship the fleet-standard version —
+`{"printWidth": 120, "singleQuote": false}` — **without** the local `plugins`/`importOrder`
+block, since `@ianvs/prettier-plugin-sort-imports` is local tooling and would otherwise be
+a declared devDependency with no config upstream (plus 879 lines of lockfile churn).
+`package-lock.json` was therefore left out of the PR entirely.
+
+Caught only because the shipped tree was linted independently before pushing, rather than
+trusting that a green local `ray lint` implies a green upstream one.
 
 ### Commits from this session (newest first)
 
