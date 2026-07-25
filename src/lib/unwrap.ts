@@ -1,6 +1,6 @@
 // src/lib/unwrap.ts
 import { classify, samePrefixStack, type Classified } from "./classify.js";
-import { HYPHEN_BREAK_END } from "./regex.js";
+import { HYPHEN_BREAK_END, SOFT_HYPHEN_END, STARTS_WITH_DIGIT, STARTS_WITH_LETTER } from "./regex.js";
 
 export type UnwrapOptions = {
   hyphenation: boolean;
@@ -18,28 +18,140 @@ const INDENT_STEP = "  ";
 
 const REFLOWABLE_ROLES = new Set<Classified["role"]>(["prose", "list-item"]);
 
-/** Build the prefix string used for re-emission. */
-function emitPrefix(prefixes: Classified["prefixes"]): string {
-  return prefixes.map((p) => (p.spaceAfter ? "> " : ">")).join("");
+/** Whether the text so far ends inside an unterminated code span / link destination. */
+type InlineState = { inCode: boolean; codeFence: number; inDest: boolean; destDepth: number };
+
+const CLOSED: InlineState = { inCode: false, codeFence: 0, inDest: false, destDepth: 0 };
+
+/**
+ * Last few characters of `text`, enough to satisfy `HYPHEN_BREAK_END` (a letter or
+ * digit plus a hyphen).
+ *
+ * Takes 3 UTF-16 code units, not 2, and never splits a surrogate pair: an astral
+ * letter like `𐐀` occupies two code units, so a flat 2-unit tail sliced it in half
+ * and `\p{L}` no longer matched — defeating the Unicode-letter join it exists for.
+ */
+function takeTail(text: string): string {
+  const tail = text.slice(-3);
+  // A leading low surrogate means the slice landed mid-pair; drop the orphan half.
+  const first = tail.charCodeAt(0);
+  return first >= 0xdc00 && first <= 0xdfff ? tail.slice(1) : tail;
 }
 
-function joinWithHyphenation(prior: string, next: string, hyphenation: boolean): string {
-  // A hyphen at the line break immediately followed by a letter is a
-  // word-internal break (soft-wrap hyphen OR a real compound like "well-known"
-  // that happened to break here). Either way the two halves belong to the same
-  // word, so they rejoin with NO space — never "well- known" / "inter- esting".
-  const brokenAcrossHyphen = prior.endsWith("-") && /^[A-Za-z]/.test(next);
-  if (brokenAcrossHyphen) {
-    // Strip the hyphen only when it looks like a *soft* line-break hyphen AND the
-    // user opted in. HYPHEN_BREAK_END deliberately excludes hyphen chains
-    // (e.g. "state-of-the-") so stripping never mashes a real compound.
-    if (hyphenation && HYPHEN_BREAK_END.test(prior) && /^[a-z]/.test(next)) {
-      return prior.slice(0, -1) + next;
+/**
+ * Prefix used for re-emission. `rawPrefix` is the verbatim prefix as it appeared
+ * in the input, so it preserves leading indentation (e.g. the 3 spaces in a
+ * list-contained quote `   > text`). Rebuilding from the frame list would drop
+ * that indent and hoist the quote out of its list item.
+ */
+function emitPrefix(rec: Classified): string {
+  return rec.rawPrefix;
+}
+
+/**
+ * Whether a run of text leaves an inline code span or link destination OPEN, given
+ * the state it started in. Computed per LINE and carried forward on the group, so
+ * the cost is linear in the input — rescanning the whole accumulated paragraph at
+ * every join was O(n²) (an 833KB single paragraph took 18s), and a bounded tail
+ * window fixed the speed but sliced tokens in half and got the answer wrong.
+ */
+function advanceInlineState(line: string, openIn: InlineState): InlineState {
+  let inCode = openIn.inCode;
+  // Delimiter length of the currently-open span (1 for `…`, 2 for ``…``). A span is
+  // closed only by a run of the SAME length, so the inner single tick of ``a`b``
+  // is literal content — toggling on it read that span as open and mis-joined the
+  // following prose.
+  let fenceLen = openIn.codeFence;
+  let inDest = openIn.inDest;
+  // Nesting depth of parentheses inside a link destination. CommonMark allows
+  // balanced parens in a URL, so the FIRST ")" is not necessarily the closer —
+  // treating it as one ended the destination early and tight-joined URL data.
+  let destDepth = openIn.destDepth;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    // A backslash escapes the next character, so `\`` and `\]` are literal text and
+    // must not open a code span or link destination. Backslash escapes are inert
+    // INSIDE a code span (CommonMark §6.1), so only honor them outside one.
+    if (ch === "\\" && !inCode && i + 1 < line.length) {
+      i++;
+      continue;
     }
-    // Otherwise keep the hyphen, but still join with no space.
-    return prior + next;
+    if (inDest) {
+      if (ch === "(") {
+        destDepth++;
+      } else if (ch === ")") {
+        if (destDepth > 0) destDepth--;
+        else inDest = false;
+      }
+      continue;
+    }
+    if (ch === "`") {
+      let run = 1;
+      while (line[i + run] === "`") run++;
+      if (!inCode) {
+        inCode = true;
+        fenceLen = run;
+      } else if (run === fenceLen) {
+        inCode = false;
+        fenceLen = 0;
+      }
+      i += run - 1;
+      continue;
+    }
+    if (inCode) continue;
+    if (ch === "]" && line[i + 1] === "(") {
+      inDest = true;
+      destDepth = 0;
+      i++;
+    }
   }
-  return prior + " " + next;
+  return { inCode, codeFence: fenceLen, inDest, destDepth };
+}
+
+/**
+ * Join two lines of one reflowed group.
+ *
+ * `priorTail` is the last 2 characters of `prior`, tracked by the caller. Slicing
+ * `prior` here instead would force V8 to flatten the accumulated rope on every
+ * join — measured at 1308ms vs 11ms for 32k lines, and the dominant cost of
+ * unwrapping a long single-paragraph paste.
+ */
+function joinWithHyphenation(
+  prior: string,
+  priorTail: string,
+  next: string,
+  hyphenation: boolean,
+  openIn: InlineState,
+): { joined: string; tail: string } {
+  // `separator` is what goes between the two halves; `drop` is how many chars to
+  // remove from the end of `prior` first. Both are applied ONCE at the end so no
+  // branch slices the accumulated rope.
+  let separator = " ";
+  let drop = 0;
+
+  // Inside an open code span or link URL the hyphen is literal data — keep the
+  // normal space join, so "`foo-\nbar`" stays "`foo- bar`" rather than "`foobar`".
+  if (!openIn.inCode && !openIn.inDest) {
+    // A break hyphen followed by a letter OR digit is word-internal: a soft-wrap
+    // hyphen ("inter-/esting"), a compound that happened to break there
+    // ("well-/known"), or a numeric range ("5-/10"). All rejoin with NO space.
+    const bindsToNext =
+      HYPHEN_BREAK_END.test(priorTail) && (STARTS_WITH_LETTER.test(next) || STARTS_WITH_DIGIT.test(next));
+    if (bindsToNext) {
+      separator = "";
+      // U+00AD exists only to mark a soft break, so it carries no meaning once the
+      // line is rejoined: drop it when the user opted in, keep it when not. An ASCII
+      // "-" is NEVER dropped — it is indistinguishable from a real compound, and
+      // mashing "well-known" into "wellknown" is the worse failure.
+      if (hyphenation && SOFT_HYPHEN_END.test(priorTail)) drop = 1;
+    }
+  }
+
+  const keptTail = drop > 0 ? priorTail.slice(0, -drop) : priorTail;
+  const joined = (drop > 0 ? prior.slice(0, prior.length - drop) : prior) + separator + next;
+  // The result's last chars always lie within this short string, so the tail is
+  // derived without ever slicing `joined`.
+  return { joined, tail: takeTail(keptTail + separator + next) };
 }
 
 type Group = {
@@ -47,6 +159,13 @@ type Group = {
   header: Classified;
   /** Concatenated content (with hyphenation already applied as we accumulate). */
   joined: string;
+  /** Inline-token state at the end of `joined`, carried forward so each join is O(line). */
+  inline: InlineState;
+  /**
+   * Last 2 chars of `joined`, tracked separately. Slicing `joined` per join forces
+   * V8 to flatten the accumulated rope — the single biggest cost on a long paste.
+   */
+  tail: string;
   /** True when the group ended with a hard break — emit marker verbatim, then \n. */
   endHardBreak?: "spaces" | "backslash";
   /** True when this group is just a passthrough (preserve-as-is or html). */
@@ -57,7 +176,7 @@ type Group = {
 
 function emitGroup(g: Group): string {
   if (g.passthrough) return g.raw ?? "";
-  const prefix = emitPrefix(g.header.prefixes);
+  const prefix = emitPrefix(g.header);
   if (g.header.role === "list-item") {
     const indent = g.header.listIndent ?? "";
     const marker = g.header.listMarker ?? "-";
@@ -70,6 +189,7 @@ function emitGroup(g: Group): string {
 
 export function unwrap(text: string, opts: UnwrapOptions): string {
   if (text === "") return "";
+
   const records = classify(text, {
     recognizeDashBullets: opts.flattenBullets,
   });
@@ -104,6 +224,8 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
         group: {
           header: rec,
           joined: "",
+          inline: CLOSED,
+          tail: "",
           passthrough: true,
           raw: rec.rawPrefix + rec.content,
         },
@@ -125,12 +247,26 @@ export function unwrap(text: string, opts: UnwrapOptions): string {
 
     if (!canContinue) {
       flush();
-      current = { header: rec, joined: rec.content };
+      current = {
+        header: rec,
+        joined: rec.content,
+        inline: advanceInlineState(rec.content, CLOSED),
+        tail: takeTail(rec.content),
+      };
     } else {
       // Continuation lines: strip leading whitespace (indentation is presentation,
       // not content — e.g. list-item hang-indent continuation).
       const continuation = rec.content.replace(/^\s+/, "");
-      current!.joined = joinWithHyphenation(current!.joined, continuation, opts.hyphenation);
+      const joinResult = joinWithHyphenation(
+        current!.joined,
+        current!.tail,
+        continuation,
+        opts.hyphenation,
+        current!.inline,
+      );
+      current!.joined = joinResult.joined;
+      current!.tail = joinResult.tail;
+      current!.inline = advanceInlineState(continuation, current!.inline);
     }
 
     if (rec.hardBreak) {

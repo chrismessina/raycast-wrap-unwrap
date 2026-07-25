@@ -3,11 +3,13 @@
 import {
   BLOCKQUOTE_PEEL,
   FENCE_BOUNDARY,
+  FENCE_CLOSER,
   HARD_BREAK_BACKSLASH,
   HARD_BREAK_SPACES,
   HEADING_ATX,
   HR,
-  INDENTED_CODE,
+  indentColumns,
+  isIndentedCode,
   LINK_REF_DEF,
   LIST_ITEM,
   SETEXT_UNDERLINE,
@@ -61,14 +63,36 @@ export type Classified = {
   hardBreak?: "spaces" | "backslash";
 };
 
-/** True iff two records have identical blockquote prefix stacks (depth + per-frame marker/spaceAfter). */
+/**
+ * True iff two records sit at the same blockquote depth with the same markers.
+ *
+ * `spaceAfter` is deliberately NOT compared: whether a `>` is followed by a space is
+ * presentation, not structure, and `> text` / `>text` are the same quote in
+ * CommonMark. Comparing it broke the wrap→unwrap round trip, because wrap emits a
+ * `>`-quoted item's continuation as `">  text"` (marker + hang indent) and
+ * `BLOCKQUOTE_PEEL` then greedily eats one of those spaces — making the
+ * continuation read as `spaceAfter: true` against a bare-`>` header, so the lines
+ * were never rejoined. Emission uses `rawPrefix`, which preserves the exact
+ * original prefix, so nothing depends on this comparison for round-tripping.
+ */
 export function samePrefixStack(a: Classified, b: Classified): boolean {
   if (a.prefixes.length !== b.prefixes.length) return false;
   for (let i = 0; i < a.prefixes.length; i++) {
     if (a.prefixes[i].marker !== b.prefixes[i].marker) return false;
-    if (a.prefixes[i].spaceAfter !== b.prefixes[i].spaceAfter) return false;
   }
-  return true;
+  // Indentation BEFORE the markers is structural: `   > x` is a quote nested inside
+  // a list item, while `> x` is a root-level quote. The frame list records only
+  // depth, so without this a list-contained quote merged with a following
+  // root-level one. Compare the indent columns, not the raw text, so a tab and
+  // four spaces at the same visual depth still group.
+  return quoteIndentColumns(a) === quoteIndentColumns(b);
+}
+
+/** Display width of the whitespace preceding a record's first quote marker. */
+function quoteIndentColumns(rec: Classified): number {
+  if (rec.prefixes.length === 0) return 0;
+  const lead = rec.rawPrefix.match(/^[ \t]*/);
+  return lead ? indentColumns(lead[0]) : 0;
 }
 
 function peelBlockquotes(line: string): {
@@ -102,6 +126,18 @@ type ClassifyOptions = {
 
 function classifyFenceBoundary(content: string): { fenceChar: "`" | "~"; fenceLen: number } | null {
   const m = content.match(FENCE_BOUNDARY);
+  if (!m) return null;
+  const run = m[1];
+  return { fenceChar: run[0] as "`" | "~", fenceLen: run.length };
+}
+
+/**
+ * A fence CLOSER, which unlike an opener may carry no info string — only trailing
+ * whitespace. Returns null for ```` ```info ````, so such a line stays in-fence
+ * instead of ending the block early and exposing its code to reflow.
+ */
+function classifyFenceCloser(content: string): { fenceChar: "`" | "~"; fenceLen: number } | null {
+  const m = content.match(FENCE_CLOSER);
   if (!m) return null;
   const run = m[1];
   return { fenceChar: run[0] as "`" | "~", fenceLen: run.length };
@@ -254,14 +290,32 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
   const out: Classified[] = [];
   let fence: FenceState = null;
 
+  /**
+   * Blockquote depths at which a list-item has appeared since the last blank
+   * line. Maintained incrementally by `push` below so the indented-code branch
+   * can answer "am I inside a list?" in O(1) — rescanning `out` per line made
+   * classification quadratic (188KB of indented code took 10.3s; MAX_INPUT
+   * permits 1MB).
+   */
+  const listDepthsSinceBlank = new Set<number>();
+
+  const push = (rec: Classified): void => {
+    if (rec.role === "blank") {
+      listDepthsSinceBlank.clear();
+    } else if (rec.role === "list-item") {
+      listDepthsSinceBlank.add(rec.prefixes.length);
+    }
+    out.push(rec);
+  };
+
   for (const line of lines) {
     const { prefixes, content, rawPrefix } = peelBlockquotes(line);
 
     // Inside a fence: only allow a matching closer; everything else is in-fence (a blank line still counts as in-fence).
     if (fence) {
-      const fb = classifyFenceBoundary(content);
+      const fb = classifyFenceCloser(content);
       if (fb && fb.fenceChar === fence.char && fb.fenceLen >= fence.len) {
-        out.push({
+        push({
           prefixes,
           role: "fence-boundary",
           content,
@@ -271,21 +325,21 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
         });
         fence = null;
       } else {
-        out.push({ prefixes, role: "in-fence", content, rawPrefix });
+        push({ prefixes, role: "in-fence", content, rawPrefix });
       }
       continue;
     }
 
     // Outside a fence:
     if (isBlank(content)) {
-      out.push({ prefixes, role: "blank", content, rawPrefix });
+      push({ prefixes, role: "blank", content, rawPrefix });
       continue;
     }
 
     const fb = classifyFenceBoundary(content);
     if (fb) {
       fence = { char: fb.fenceChar, len: fb.fenceLen };
-      out.push({
+      push({
         prefixes,
         role: "fence-boundary",
         content,
@@ -297,23 +351,23 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
     }
 
     if (HEADING_ATX.test(content)) {
-      out.push({ prefixes, role: "heading-atx", content, rawPrefix });
+      push({ prefixes, role: "heading-atx", content, rawPrefix });
       continue;
     }
 
     if (HR.test(content)) {
-      out.push({ prefixes, role: "hr", content, rawPrefix });
+      push({ prefixes, role: "hr", content, rawPrefix });
       continue;
     }
 
     if (LINK_REF_DEF.test(content)) {
-      out.push({ prefixes, role: "link-ref-def", content, rawPrefix });
+      push({ prefixes, role: "link-ref-def", content, rawPrefix });
       continue;
     }
 
     const li = classifyListItem(content, classifyOpts);
     if (li) {
-      out.push({
+      push({
         prefixes,
         role: "list-item",
         content: li.innerContent,
@@ -334,15 +388,13 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
     // indented-code, not prose. Both roles are passed through verbatim by wrap/unwrap,
     // so the round-trip output is unaffected — a faithful classifier would need to
     // track open-list state across blanks.
-    if (INDENTED_CODE.test(content)) {
-      const lastBlankIdx =
-        [...out]
-          .map((c, i) => ({ c, i }))
-          .reverse()
-          .find(({ c }) => c.role === "blank")?.i ?? -1;
-      const sinceBlank = out.slice(lastBlankIdx + 1);
-      const inListContext = sinceBlank.some((c) => c.role === "list-item" && c.prefixes.length === prefixes.length);
-      out.push({
+    if (isIndentedCode(content)) {
+      // `listDepthsSinceBlank` is maintained incrementally as records are pushed
+      // (see the push sites below), so this is O(1) per line. Copying and
+      // rescanning `out` here instead made classification quadratic: 188KB of
+      // indented code took 10.3s, and MAX_INPUT permits 1MB.
+      const inListContext = listDepthsSinceBlank.has(prefixes.length);
+      push({
         prefixes,
         role: inListContext ? "prose" : "indented-code",
         content,
@@ -352,12 +404,12 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
     }
 
     if (classifyHtmlBlockStart(content)) {
-      out.push({ prefixes, role: "html-block", content, rawPrefix });
+      push({ prefixes, role: "html-block", content, rawPrefix });
       continue;
     }
 
     // Default:
-    out.push({ prefixes, role: "prose", content, rawPrefix });
+    push({ prefixes, role: "prose", content, rawPrefix });
   }
 
   applySetextPass(out);

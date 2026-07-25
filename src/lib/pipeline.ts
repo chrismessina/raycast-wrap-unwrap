@@ -76,6 +76,21 @@ export async function failureToast(title: string, message: string): Promise<void
   });
 }
 
+/**
+ * Stringify an unknown thrown value for display. `String(value)` throws a
+ * TypeError on a null-prototype object or a Symbol, which would turn a HANDLED
+ * failure into an uncaught one and skip the required Copy-Error toast entirely —
+ * so the conversion itself has to be guarded.
+ */
+function stringifyUnknown(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  try {
+    return String(error);
+  } catch {
+    return "Unknown error";
+  }
+}
+
 /** Maps known error classes to user-facing failure toasts; falls back to `fallbackTitle`. */
 export async function reportFailure(error: unknown, fallbackTitle: string): Promise<void> {
   if (error instanceof NoTextError) {
@@ -86,7 +101,7 @@ export async function reportFailure(error: unknown, fallbackTitle: string): Prom
     await failureToast("Text exceeds 1MB limit", "Use a text editor for documents this large.");
     return;
   }
-  const message = error instanceof Error ? error.message : "Unknown error";
+  const message = stringifyUnknown(error);
   await failureToast(fallbackTitle, message);
 }
 
@@ -138,7 +153,12 @@ export async function deliver<C extends BaseLaunchContext>({
  * positive integer, falling back to 80 on NaN/non-positive input.
  */
 export function parseWidth(raw: string | undefined): number {
-  const n = Number.parseInt(raw ?? "", 10);
+  // Require the WHOLE trimmed value to be digits. `Number.parseInt` accepts a
+  // numeric prefix, so "12px" silently became 12 instead of falling back to 80 as
+  // the preference description promises.
+  const trimmed = (raw ?? "").trim();
+  if (!/^\d+$/.test(trimmed)) return 80;
+  const n = Number.parseInt(trimmed, 10);
   return Number.isFinite(n) && n > 0 ? n : 80;
 }
 

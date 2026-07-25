@@ -53,9 +53,12 @@ test("unwrap merges list-item continuation lines", () => {
   assert.equal(unwrap(input, dflt), "- item one continues\n- item two");
 });
 
-test("unwrap strips soft hyphens when enabled", () => {
+test("unwrap keeps an ASCII hyphen at a break, joining tight (strip ON)", () => {
+  // ON strips only a true U+00AD soft hyphen. An ASCII "-" is indistinguishable
+  // from a real compound ("well-/known"), so it is preserved and the halves are
+  // joined with no space. See the R3 tests for the U+00AD behavior.
   const input = "an inter-\nesting word";
-  assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "an interesting word");
+  assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "an inter-esting word");
 });
 
 test("unwrap leaves single-line compounds alone (not split, no hyphenation runs)", () => {
@@ -78,12 +81,12 @@ test("unwrap rejoins a mid-compound break with NO space and no strip", () => {
   assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "the state-of-the-art");
 });
 
-test("unwrap real compound rejoins with no space, hyphen kept (strip ON, prefix is a whole word)", () => {
-  // "well-known" split at the break: ON strips a *soft* hyphen, but this rejoins
-  // with no space either way. Per the strip-all policy the simple soft form is
-  // stripped; the point of this test is the NO-SPACE join.
+test("unwrap real compound rejoins with no space, hyphen kept (strip ON)", () => {
+  // "well-known" split at the break: the hyphen is KEPT even with strip ON, because
+  // an ASCII hyphen can't be told from a real compound — destroying "well-known"
+  // into "wellknown" is the worse failure. Only U+00AD is ever stripped.
   const input = "a well-\nknown fact";
-  assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "a wellknown fact");
+  assert.equal(unwrap(input, { ...dflt, hyphenation: true }), "a well-known fact");
 });
 
 test("unwrap with hyphenation off keeps the hyphen and rejoins with NO space", () => {
@@ -98,12 +101,12 @@ test("unwrap with hyphenation off preserves a real compound across the break", (
   assert.equal(unwrap(input, { ...dflt, hyphenation: false }), "a well-known fact");
 });
 
-test("unwrap does NOT word-join a hyphen followed by a digit (number range)", () => {
-  // The no-space join is gated on a LETTER on the next line, so numeric ranges
-  // like "5-\n10" keep the normal space join and are never mashed to "5-10"/"510".
+test("unwrap word-joins a hyphen followed by a digit (number range)", () => {
+  // A hyphen-broken numeric range is one token: "5-\n10" is "5-10", never "5- 10".
+  // The hyphen is kept (never stripped), so no range is mashed into "510".
   const input = "range 5-\n10 items";
-  assert.equal(unwrap(input, dflt), "range 5- 10 items");
-  assert.equal(unwrap("call 555-\n1234 now", dflt), "call 555- 1234 now");
+  assert.equal(unwrap(input, dflt), "range 5-10 items");
+  assert.equal(unwrap("call 555-\n1234 now", dflt), "call 555-1234 now");
 });
 
 test("unwrap protects inline code from joins", () => {
@@ -181,4 +184,128 @@ test("em-dash lines stay prose unless flattenBullets is enabled", () => {
   const input = "— first\n— second";
   assert.equal(unwrap(input, dflt), "— first — second");
   assert.equal(unwrap(input, { ...dflt, flattenBullets: true }), "— first\n— second");
+});
+
+// ─── Review findings (2026-07-25 adversarial review) ────────────────────────
+
+test("R1 unwrap does not corrupt a literal hyphen inside a code span", () => {
+  assert.equal(unwrap("`foo-\nbar`", dflt), "`foo- bar`");
+});
+
+test("R1 unwrap does not corrupt a literal hyphen inside a link URL", () => {
+  assert.equal(
+    unwrap("[docs](https://example.test/foo-\nbar)", dflt),
+    "[docs](https://example.test/foo- bar)",
+  );
+});
+
+test("R2 unwrap rejoins a hyphen break before a non-ASCII letter", () => {
+  assert.equal(unwrap("co-\növerse", { ...dflt, hyphenation: false }), "co-överse");
+  assert.equal(unwrap("Bindestrich-\nWörter", { ...dflt, hyphenation: false }), "Bindestrich-Wörter");
+});
+
+test("R3 unwrap strips a true Unicode soft hyphen (U+00AD) when ON", () => {
+  assert.equal(unwrap("hy­\nphen", { ...dflt, hyphenation: true }), "hyphen");
+});
+
+test("R3 unwrap keeps a Unicode soft hyphen when OFF", () => {
+  assert.equal(unwrap("hy­\nphen", { ...dflt, hyphenation: false }), "hy­phen");
+});
+
+test("R4 unwrap joins a hyphenated numeric range with no space", () => {
+  assert.equal(unwrap("range 5-\n10 items", dflt), "range 5-10 items");
+  assert.equal(unwrap("call 555-\n1234 now", dflt), "call 555-1234 now");
+});
+
+test("R-policy: ASCII hyphen at a break is never stripped, always joined tight", () => {
+  assert.equal(unwrap("a well-\nknown fact", { ...dflt, hyphenation: true }), "a well-known fact");
+  assert.equal(unwrap("an inter-\nesting word", { ...dflt, hyphenation: true }), "an inter-esting word");
+  assert.equal(unwrap("the state-of-the-\nart", { ...dflt, hyphenation: true }), "the state-of-the-art");
+});
+
+test("H1 unwrap preserves indentation before a blockquote inside a list item", () => {
+  const input = "1. list item\n   > alpha beta";
+  assert.equal(unwrap(input, dflt), "1. list item\n   > alpha beta");
+});
+
+test("H3 unwrap treats a tab-indented line as code, not prose", () => {
+  assert.equal(unwrap("\tcode line\nnext line", dflt), "\tcode line\nnext line");
+});
+
+test("L1 unwrap does not treat an even run of trailing backslashes as a hard break", () => {
+  assert.equal(unwrap("literal\\\\\nnext", dflt), "literal\\\\ next");
+});
+
+test("inline-token guard uses span structure, not backtick parity", () => {
+  // A closed ``a`b`` span must not read as open (its inner tick is content), so the
+  // following prose hyphen still joins tight.
+  assert.equal(unwrap("``a`b`` word-\nnext", dflt), "``a`b`` word-next");
+  // An open span after any number of closed ones must still be detected.
+  assert.equal(unwrap("`a` `b` `foo-\nbar`", dflt), "`a` `b` `foo- bar`");
+  assert.equal(unwrap("``x`` `foo-\nbar`", dflt), "``x`` `foo- bar`");
+});
+
+test("unwrap stays linear on a long single-paragraph paste", () => {
+  // Regression guard for two O(n²) traps, both of which made a legal <=1MB paste
+  // hang Raycast for seconds: rescanning the accumulated paragraph with an anchored
+  // regex, and slicing it per join (which forces V8 to flatten the rope).
+  const lines = 20_000;
+  const input = Array.from({ length: lines }, (_, i) => `word${i} filler text here`).join("\n");
+  const started = process.hrtime.bigint();
+  const out = unwrap(input, dflt);
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.equal(out.split("\n").length, 1, "should collapse to a single paragraph");
+  // Generous bound: the linear implementation runs in ~15ms, the quadratic one took
+  // >1000ms at this size. Anything near the ceiling means a rope-flattening slice or
+  // full-accumulator regex came back.
+  assert.ok(elapsedMs < 400, `unwrap took ${elapsedMs.toFixed(0)}ms — quadratic path likely reintroduced`);
+});
+
+test("unwrap rejoins across an astral (surrogate-pair) letter", () => {
+  // The tail tracked for the hyphen test must not split a surrogate pair, or
+  // \p{L} stops matching and the tight join is lost.
+  assert.equal(unwrap("𐐀-\nword", { ...dflt, hyphenation: false }), "𐐀-word");
+  assert.equal(unwrap("𐐀-\n𐐀", { ...dflt, hyphenation: false }), "𐐀-𐐀");
+});
+
+test("unwrap keeps a hyphen literal inside a URL with balanced parens", () => {
+  // CommonMark allows balanced parens in a destination, so the first ")" is not
+  // the closer — treating it as one tight-joined real URL data.
+  assert.equal(
+    unwrap("[a](https://x.test/(foo)bar-\nword)", dflt),
+    "[a](https://x.test/(foo)bar- word)",
+  );
+});
+
+test("unwrap rejoins continuations under a no-space blockquote marker", () => {
+  // wrap() emits a ">"-quoted list item's continuation as ">  text" (marker + hang
+  // indent). Re-reading that, BLOCKQUOTE_PEEL greedily eats one space, so the
+  // continuation looked like ">"+space while the header was bare ">" — different
+  // prefix stacks, so the lines were never rejoined.
+  assert.equal(
+    unwrap(">- alpha beta\n>  gamma delta", dflt),
+    ">- alpha beta gamma delta",
+  );
+  // Plain prose under a bare ">" must still rejoin.
+  assert.equal(unwrap(">alpha\n>beta", dflt), ">alpha beta");
+});
+
+test("unwrap keeps genuinely different blockquote depths apart", () => {
+  // The relaxation above must not merge across a real depth change.
+  assert.equal(unwrap(">outer\n>> inner", dflt), ">outer\n>> inner");
+});
+
+test("unwrap keeps a list-nested blockquote separate from a root-level one", () => {
+  // Indentation before the marker is structural: "   > x" is inside the list item,
+  // "> x" is a root-level quote. Same frame depth, different blocks.
+  assert.equal(unwrap("1. outer\n   > alpha\n> beta", dflt), "1. outer\n   > alpha\n> beta");
+  // Same indent still merges.
+  assert.equal(unwrap("1. outer\n   > alpha\n   > beta", dflt), "1. outer\n   > alpha beta");
+});
+
+test("unwrap ignores escaped inline delimiters when deciding a join", () => {
+  // A backslash-escaped backtick or "](" is literal text and must not leave the
+  // inline state open, which would suppress the tight hyphen join.
+  assert.equal(unwrap("literal \\`tick word-\nnext", dflt), "literal \\`tick word-next");
+  assert.equal(unwrap("literal \\](x word-\nnext", dflt), "literal \\](x word-next");
 });
