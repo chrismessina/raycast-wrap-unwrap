@@ -284,3 +284,20 @@ test("wrap stays linear despite per-token block probing", () => {
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
   assert.ok(elapsedMs < 2000, `wrap took ${elapsedMs.toFixed(0)}ms — per-token cost regressed`);
 });
+
+test("no trailing block-construct token survives a wrap with lost or changed structure", () => {
+  // Both probe forms matter: "*** x" is prose but a bare "***" is a horizontal rule,
+  // and "> x" is a quote but a bare ">" is an empty one whose token gets deleted.
+  const u = { hyphenation: true, keepBlankLines: false, flattenBullets: false };
+  const tokens = [
+    "|", "|---|", "[id]:", "<div>", "<!--", "***", "___", "- - -", "=", "==", "---", "===",
+    "```js", "~~~", "#", "######", ">", ">>", "1.", "-", "*", "+", "•", "5.", "<br>", "[x]:",
+  ];
+  for (const token of tokens) {
+    const input = `alpha bravo charlie ${token}`;
+    for (const width of [20, 24]) {
+      const wrapped = wrap(input, { width });
+      assert.equal(unwrap(wrapped, u), input, `token ${JSON.stringify(token)} at width ${width}: ${JSON.stringify(wrapped)}`);
+    }
+  }
+});

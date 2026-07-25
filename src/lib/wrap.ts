@@ -71,21 +71,28 @@ function prefixColumns(prefix: string): number {
  * becomes a setext underline. Keeping the token on the previous line (overrunning
  * the width) is the lesser evil versus corrupting or losing content.
  *
- * The check asks the CLASSIFIER whether a line consisting of this token plus some
- * prose would still be prose — rather than hand-listing constructs, which is how
- * blockquote and setext were missed the first time.
+ * The check asks the CLASSIFIER whether the resulting line would still be prose,
+ * rather than hand-listing constructs — that list is what missed blockquote and
+ * setext the first time.
+ *
+ * Both forms are probed, because a wrapped line may end at the token or continue
+ * past it, and each form hides constructs the other reveals: `"*** x"` is prose
+ * while a bare `"***"` is a horizontal rule, and `"> x"` is a quote while a bare
+ * `">"` is an empty one.
  */
 function wouldStartNewBlock(token: string): boolean {
   // `recognizeDashBullets` must match what wrap() itself passes to classify (the
   // default, false), or `—`/`–` are treated as bullets here while ordinary
   // classification calls them prose — bypassing the budget for every em-dash.
-  const [probe] = classify(`${token} x`);
-  if (probe === undefined) return false;
-  // A blockquote marker keeps role "prose" (the role describes the content INSIDE the
-  // quote), so the peeled prefix has to be checked separately. A bare ">" is the
-  // dangerous case: it re-reads as an empty quote and the token is dropped entirely.
-  if (probe.prefixes.length > 0) return true;
-  if (probe.role !== "prose") return true;
+  for (const probeLine of [`${token} x`, token]) {
+    const [probe] = classify(probeLine);
+    if (probe === undefined) continue;
+    // A blockquote marker keeps role "prose" (the role describes the content INSIDE
+    // the quote), so the peeled prefix has to be checked separately. A bare ">" is
+    // the dangerous case: it re-reads as an empty quote and the token is dropped.
+    if (probe.prefixes.length > 0) return true;
+    if (probe.role !== "prose" && probe.role !== "blank") return true;
+  }
   // A prose line can still be retagged by the setext pass, which needs the FOLLOWING
   // line to decide. `---`/`===` alone classify as `hr`/`prose` depending on length,
   // so test the underline shape directly.
