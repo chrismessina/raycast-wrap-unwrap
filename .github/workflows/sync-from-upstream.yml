@@ -1,0 +1,93 @@
+name: Sync from upstream
+
+on:
+  repository_dispatch:
+    types: [upstream-sync]
+  workflow_dispatch:
+    inputs:
+      ext_dir:
+        description: "Override monorepo directory name (extensions/<ext_dir>) if it differs from package.json name"
+        required: false
+
+# Set UPSTREAM_EXT_DIR in repo-level env vars to permanently override the
+# monorepo directory name when it differs from the package.json name field.
+# e.g. for chrismessina/raycast-reader: UPSTREAM_EXT_DIR = reader-mode
+env:
+  UPSTREAM_EXT_DIR: ""
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read extension name from package.json
+        id: meta
+        run: |
+          NAME=$(jq -r '.name' package.json)
+          # Use override if provided (dispatch payload > workflow input > env var > package.json name)
+          OVERRIDE="${{ github.event.client_payload.ext_name }}"
+          if [ -z "$OVERRIDE" ]; then OVERRIDE="${{ inputs.ext_dir }}"; fi
+          if [ -z "$OVERRIDE" ]; then OVERRIDE="${UPSTREAM_EXT_DIR}"; fi
+          if [ -n "$OVERRIDE" ]; then NAME="$OVERRIDE"; fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Download extension files from upstream monorepo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXT_NAME="${{ steps.meta.outputs.name }}"
+          API_BASE="https://api.github.com/repos/raycast/extensions/contents/extensions/${EXT_NAME}"
+
+          # Recursively download all files in the extension directory
+          download_dir() {
+            local api_path="$1"
+            local local_path="$2"
+
+            items=$(gh api "$api_path" 2>/dev/null) || {
+              echo "Failed to fetch $api_path"
+              exit 1
+            }
+
+            echo "$items" | jq -c '.[]' | while read -r item; do
+              type=$(echo "$item" | jq -r '.type')
+              name=$(echo "$item" | jq -r '.name')
+              download_url=$(echo "$item" | jq -r '.download_url // empty')
+              subpath=$(echo "$item" | jq -r '.path' | sed "s|extensions/${EXT_NAME}/||")
+
+              if [ "$type" = "file" ] && [ -n "$download_url" ]; then
+                mkdir -p "$(dirname "$local_path/$name")"
+                curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$download_url" -o "$local_path/$name"
+                echo "  downloaded: $subpath/$name"
+              elif [ "$type" = "dir" ]; then
+                mkdir -p "$local_path/$name"
+                download_dir "$api_path/$name" "$local_path/$name"
+              fi
+            done
+          }
+
+          download_dir "$API_BASE" "."
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            PR_NUMBER="${{ github.event.client_payload.pr_number }}"
+            PR_URL="${{ github.event.client_payload.pr_url }}"
+            MSG="chore: sync from upstream raycast/extensions"
+            if [ -n "$PR_NUMBER" ]; then
+              MSG="$MSG (raycast/extensions#${PR_NUMBER})"
+            fi
+            git commit -m "$MSG"
+            git push
+          fi
