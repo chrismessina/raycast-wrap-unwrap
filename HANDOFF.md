@@ -5,6 +5,20 @@
 16 files, base `raycast/extensions:main`, auto-labeled `extension: wrap-unwrap` /
 `OP is author`. Awaiting Raycast review.
 
+**Greptile review (3/5) came back with 2 findings; both fixed and re-pushed.** A stale
+list-context bug split one blockquote into two, and the block-start probe was O(width)
+per rejected break — 20k unsafe tokens at width 20000 took 4048ms, and `width` has no
+upper bound because a cross-extension `launchContext` supplies it directly, bypassing
+`parseWidth`. The probe is now capped at 8 tokens as well as the budget: 22ms. Tests
+147 → 151.
+
+**The learning is consolidated into
+[`raycast-extension-workflows`](https://github.com/chrismessina/raycast-extension-workflows)**
+at `docs/solutions/design-patterns/quadratic-accumulator-paths-in-text-reflow.md` —
+fleet-wide practice lives with the fleet docs, not per-extension. `CONCEPTS.md` stays
+here (it is wrap-unwrap's own vocabulary). Neither ships in the Store PR: wrap-unwrap's
+published file set excludes both, and no published extension ships a `CONCEPTS.md`.
+
 ## Current state (verified 2026-07-25)
 
 - **Branch:** `main` == `origin/main` == **`9ed10d5`**, 0 unpushed. Mirror is current.
