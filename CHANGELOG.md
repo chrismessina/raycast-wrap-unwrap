@@ -15,6 +15,8 @@
 - Fix **Unwrap Text** splitting a single blockquote whose `>` markers were indented inconsistently — CommonMark allows up to three spaces before the marker, so those lines belong to the same quote.
 - Fix a link whose URL contains balanced parentheses being split across lines by **Wrap Text**.
 - Fix **Unwrap Text** merging a blockquote nested inside a list item with a following top-level blockquote — indentation before the `>` marker is structural, not decoration.
+- Fix **Unwrap Text** splitting one blockquote in two when a list appeared earlier in the document without a blank line closing it — a line back at the margin ends a list, so the following quotes belong to the same paragraph.
+- Fix **Wrap Text** slowing down sharply at large **Wrap Column** values when the text contains a run of characters that could start a new block (`-`, `#`, `>`). The check that prevents those characters from beginning a wrapped line now inspects a fixed number of words rather than a full line's worth, so wrapping stays fast at any column width.
 - Fix **Unwrap Text** mis-handling a backslash-escaped `` ` `` or `](`, which was read as opening real inline code or a link and suppressed the correct hyphen rejoining.
 - Fix **Wrap Text** misaligning the continuation lines of a tab-indented list item — a tab counts as one character but renders as a full tab stop, so continuations were under-indented and no longer lined up with the item's text.
 - Fix **Wrap Text** continuation lines on a task list item (`- [ ]`) not clearing the checkbox, so wrapped text sat under the `[ ]` instead of aligning with the item's text.
