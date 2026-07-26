@@ -14,7 +14,7 @@ upper bound because a cross-extension `launchContext` supplies it directly, bypa
 
 **The learning is consolidated into
 [`raycast-extension-workflows`](https://github.com/chrismessina/raycast-extension-workflows)**
-at `docs/solutions/design-patterns/quadratic-accumulator-paths-in-text-reflow.md` —
+at `/Users/messina/Developer/GitHub/chrismessina/raycast-extension-workflows/docs/solutions/design-patterns/quadratic-accumulator-paths-in-text-reflow.md` —
 fleet-wide practice lives with the fleet docs, not per-extension. `CONCEPTS.md` stays
 here (it is wrap-unwrap's own vocabulary). Neither ships in the Store PR: wrap-unwrap's
 published file set excludes both, and no published extension ships a `CONCEPTS.md`.
@@ -85,7 +85,7 @@ attempt reintroduced a quadratic path (1MB → 32s) that my own perf guard caugh
    on every join, and (introduced then removed in round 7) a per-break scan of all
    remaining tokens.
 2. **`well-` + `known` → `wellknown`** with Strip Soft Hyphens on — the exact case
-   `c7ad7e6` was written to fix — and `test/unwrap.test.ts` was *asserting* the corrupted
+   `c7ad7e6` was written to fix — and `/Users/messina/Developer/GitHub/chrismessina/raycast-wrap-unwrap/test/unwrap.test.ts` was *asserting* the corrupted
    output, which is why 102/102 was green.
 
 ### The hyphenation policy (decided by Chris, 2026-07-25)
