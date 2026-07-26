@@ -38,6 +38,9 @@ src/
 
 test/                     # node:test unit tests, one file per pure module
 test-fixtures/            # 14 manual evaluation fixtures for `npm run dev`
+
+CONCEPTS.md               # shared domain vocabulary (Classified Line, Role, Quote Frame,
+                          # Reflow Group) — relevant when orienting or discussing the engine
 ```
 
 ### Classifier shape
@@ -68,6 +71,7 @@ Stateful pieces of `classify`:
 3. **Every failure toast must include a "Copy Error" `primaryAction`.** Use `failureToast` from `pipeline.ts` or replicate the shape inline. This applies to expected and unexpected failures.
 4. **Run `npx ray lint --fix` before every commit.** It formats code AND markdown.
 5. **TDD for pure functions.** The classifier, wrap, unwrap, and inline modules have failing tests written first. Don't weaken tests to make them pass.
+6. **Never remove or loosen the elapsed-time assertions in `test/wrap.test.ts` and `test/unwrap.test.ts`.** `MAX_INPUT` admits 1MB, so 1MB must stay fast. Correctness tests, `tsc`, and `ray lint` all pass while a quadratic path is live — these timers are the only thing that catches it, and they have caught real regressions more than once. Any change touching an accumulator in `classify`/`wrap`/`unwrap` must keep them green. Background: `docs/solutions/design-patterns/quadratic-accumulator-paths-in-text-reflow.md` in [`raycast-extension-workflows`](https://github.com/chrismessina/raycast-extension-workflows), where fleet-wide learnings are consolidated.
 
 ## Tech stack notes
 
