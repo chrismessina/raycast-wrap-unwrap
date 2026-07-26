@@ -64,6 +64,9 @@ jobs:
               if [ "$type" = "file" ] && [ -n "$download_url" ]; then
                 mkdir -p "$(dirname "$local_path/$name")"
                 curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$download_url" -o "$local_path/$name"
+                # Record what we wrote so the commit step can stage exactly these
+                # paths. Staging the whole tree would sweep in local-only work.
+                printf '%s\n' "${local_path#./}/$name" | sed 's|^/||' >> "$RUNNER_TEMP/synced-files.txt"
                 echo "  downloaded: $subpath/$name"
               elif [ "$type" = "dir" ]; then
                 mkdir -p "$local_path/$name"
@@ -75,10 +78,39 @@ jobs:
           download_dir "$API_BASE" "."
 
       - name: Commit and push if changed
+        # Explicit bash: the deletion loop uses process substitution.
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
+
+          # Stage ONLY the files this run downloaded. `git add -A` would also commit
+          # anything else in the tree — an uncommitted local edit, an untracked
+          # CLAUDE.md, a scratch file — into an automated commit nobody reviews.
+          MANIFEST="$RUNNER_TEMP/synced-files.txt"
+          if [ ! -s "$MANIFEST" ]; then
+            echo "No files were downloaded; nothing to stage."
+            exit 0
+          fi
+          sort -u "$MANIFEST" -o "$MANIFEST"
+          tr '\n' '\0' < "$MANIFEST" | xargs -0 git add --
+
+          # Propagate upstream deletions, but only for files that were ALREADY
+          # tracked and sit under a directory this sync populates. A tracked file
+          # outside those directories (AGENTS.md, CONCEPTS.md, .github/) is
+          # local-only by design and must survive.
+          # Note the process substitution: piping `git ls-files` into the loop would
+          # run it in a subshell, where `git rm` still works but the intent is easy
+          # to break later. Reading from `< <(...)` keeps it in the current shell.
+          SYNCED_ROOTS=$(cut -d/ -f1 "$MANIFEST" | sort -u)
+          while read -r tracked; do
+            if ! grep -Fxq "$tracked" "$MANIFEST"; then
+              echo "  upstream no longer serves: $tracked"
+              git rm -q --cached --ignore-unmatch -- "$tracked"
+              rm -f -- "$tracked"
+            fi
+          done < <(git ls-files -- $SYNCED_ROOTS)
+
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
