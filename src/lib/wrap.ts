@@ -8,6 +8,14 @@ export type WrapOptions = {
 };
 
 const MIN_WIDTH = 20;
+
+/**
+ * How many tokens past the break the block-start probe may gather. Whether a line
+ * begins a block is decided by its opening token(s) — a list marker, a fence, an
+ * ATX run, a setext underline — so a handful is always enough, and the cap keeps the
+ * probe O(1) per break regardless of how large `width` is.
+ */
+const BLOCK_PROBE_TOKENS = 8;
 const REFLOWABLE_ROLES = new Set<Classified["role"]>(["prose", "list-item"]);
 
 /**
@@ -124,8 +132,16 @@ function greedyFill(tokens: string[], firstBudget: number, contBudget: number): 
     // line parses as something other than prose; then keep the token here and
     // overrun instead. Only the tokens that would actually LAND on that line are
     // gathered — slicing all remaining tokens made this quadratic (1MB took 32s).
+    //
+    // The probe is bounded by a token COUNT as well as the budget. What makes a line
+    // start a block is decided by its first token or two (a marker, a fence, an
+    // underline run); no construct needs thousands of characters to recognize. Using
+    // the budget alone made the scan O(width) per break, so a large Wrap Column with
+    // a run of unsafe tokens was quadratic again — 20k dashes at width 20000 took
+    // 4048ms. `width` has no upper bound: a cross-extension launchContext supplies it
+    // directly, bypassing parseWidth entirely.
     let probeLine = t;
-    for (let j = i + 1; j < tokens.length; j++) {
+    for (let j = i + 1; j < tokens.length && j - i <= BLOCK_PROBE_TOKENS; j++) {
       if (probeLine.length + 1 + tokens[j].length > contBudget) break;
       probeLine += " " + tokens[j];
     }

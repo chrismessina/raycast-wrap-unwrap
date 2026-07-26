@@ -317,3 +317,26 @@ test("wrap only overruns the width when the resulting line is genuinely unsafe",
   const out = wrap("alpha bravo charlie *** delta", { width: 20 });
   assert.equal(out, "alpha bravo charlie\n*** delta");
 });
+
+test("block probing stays bounded at large wrap widths", () => {
+  // The probe is capped by token COUNT, not just the width budget. Bounding it by the
+  // budget alone made each rejected break O(width): a run of unsafe tokens at width
+  // 20000 took ~4s, and width has no upper bound (a launchContext caller sets it
+  // directly, bypassing parseWidth). The width-80 guard never covered this path.
+  const input = "x".repeat(40_000) + " " + Array.from({ length: 20_000 }, () => "-").join(" ");
+  const started = process.hrtime.bigint();
+  wrap(input, { width: 20_000 });
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 1500, `wrap took ${elapsedMs.toFixed(0)}ms at width 20000 — probe is O(width) again`);
+});
+
+test("the token-capped probe still detects multi-token blocks at large widths", () => {
+  // Capping the probe must not weaken block detection: "_ ___" is still a horizontal
+  // rule, and a trailing ">" is still an empty blockquote that would be deleted.
+  const u = { hyphenation: true, keepBlankLines: false, flattenBullets: false };
+  for (const width of [20, 5000]) {
+    for (const input of ["alpha bravo charlie _ ___", "alpha bravo charlie >"]) {
+      assert.equal(unwrap(wrap(input, { width }), u), input, `width ${width}: ${JSON.stringify(input)}`);
+    }
+  }
+});

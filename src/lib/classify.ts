@@ -125,6 +125,20 @@ function isBlank(content: string): boolean {
  * far the innermost quote marker is indented within its parent block. For `">   > "`
  * that is 3, not 0: the inner marker sits three columns into the outer quote.
  */
+/**
+ * True when this record ends any list that was open — a line at the margin, outside
+ * any blockquote, that is not itself a list item.
+ *
+ * An INDENTED line is excluded because it may be a lazy continuation of the open
+ * item, which must keep reflowing with it. Quoted lines are excluded too: they are
+ * the very records the list-context flag exists to classify, so treating them as
+ * list-enders would clear the state a line before it is read.
+ */
+function closesOpenList(rec: Classified): boolean {
+  if (rec.role === "list-item" || rec.prefixes.length > 0) return false;
+  return !/^[ \t]/.test(rec.rawPrefix + rec.content);
+}
+
 function innerQuoteIndentColumns(rawPrefix: string): number {
   const lastMarker = rawPrefix.lastIndexOf(">");
   if (lastMarker === -1) return 0;
@@ -322,7 +336,12 @@ export function classify(text: string, opts: ClassifyOptions = {}): Classified[]
   const listContentColumn = new Map<number, number>();
 
   const push = (rec: Classified): void => {
-    if (rec.role === "blank") {
+    if (rec.role === "blank" || closesOpenList(rec)) {
+      // A blank line ends a list, and so does a line that starts back at the margin
+      // without being part of one — `1. item` / `root prose` leaves no list open.
+      // Clearing only on blank left the prior item's content column live, so a later
+      // 3-space root quote was wrongly marked list-nested while an adjacent
+      // unindented one was not, splitting one quote paragraph into two groups.
       listDepthsSinceBlank.clear();
       listContentColumn.clear();
     } else if (rec.role === "list-item") {

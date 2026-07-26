@@ -344,3 +344,25 @@ test("the governing list item is the most recent one, not the narrowest sibling"
     "1. short\n123456789. wide\n   > alpha beta gamma delta",
   );
 });
+
+test("root prose closes an open list for blockquote grouping", () => {
+  // A line back at the margin ends a list just as a blank line does. Clearing the
+  // list-context state only on blank left the prior item's content column live, so a
+  // 3-space root quote was marked list-nested while the unindented quote after it was
+  // not — splitting one root blockquote paragraph into two groups.
+  assert.equal(
+    unwrap("1. item\nroot prose closes the list\n   > alpha beta\n> gamma delta", dflt),
+    "1. item root prose closes the list\n   > alpha beta gamma delta",
+  );
+  // A heading closes it too.
+  assert.equal(unwrap("1. item\n# H\n   > alpha\n> beta", dflt), "1. item\n# H\n   > alpha beta");
+});
+
+test("an indented continuation does NOT close the list", () => {
+  // Lazy continuations belong to the open item and must keep it open, or the quote
+  // that follows would wrongly merge with a root-level one.
+  assert.equal(
+    unwrap("1. item\n   continues here\n   > alpha\n> beta", dflt),
+    "1. item continues here\n   > alpha\n> beta",
+  );
+});
