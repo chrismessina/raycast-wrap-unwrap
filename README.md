@@ -1,5 +1,17 @@
 # Wrap Unwrap
 
+<div align="center">
+  <a href="https://github.com/chrismessina">
+    <img src="https://img.shields.io/github/followers/chrismessina?label=Follow%20chrismessina&style=social" alt="Follow @chrismessina">
+  </a>
+  <a href="https://github.com/chrismessina/raycast-wrap-unwrap/stargazers">
+    <img src="https://img.shields.io/github/stars/chrismessina/raycast-wrap-unwrap?style=social" alt="Stars">
+  </a>
+  <a href="https://www.raycast.com/chrismessina/wrap-unwrap">
+    <img src="https://img.shields.io/badge/Raycast-Store-red.svg" alt="Wrap Unwrap on Raycast store.">
+  </a>
+</div>
+
 Reflow text to or from wrapped form, with Markdown awareness. Two `no-view` commands you can hotkey-bind:
 
 - **Wrap Text** — wrap the selected text (or clipboard text) at a configurable column width.
