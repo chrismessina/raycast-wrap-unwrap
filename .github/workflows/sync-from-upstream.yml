@@ -1,6 +1,22 @@
 name: Sync from upstream
 
+# TEMPLATE — copy to <mirror>/.github/workflows/sync-from-upstream.yml
+#
+# Reconciles a standalone mirror against the merged monorepo state. This is what
+# delivers the two things Raycast CI produces ONLY on merge: recompressed
+# screenshots and the stamped {PR_MERGE_DATE}.
+#
+# STAGGER THE CRON MINUTE per repo. GitHub queues same-minute schedules across
+# all of Actions, and scheduled runs are already best-effort under load.
+
 on:
+  # Without a schedule this only fires if something dispatches it — and when
+  # that something is missing, the mirror drifts silently for months. Verified
+  # 2026-07-31 on raycast-karakeep: zero runs since the workflow was added,
+  # which is why its tree was three upstream commits behind. A daily run is a
+  # no-op when there is nothing new.
+  schedule:
+    - cron: "20 9 * * *"
   repository_dispatch:
     types: [upstream-sync]
   workflow_dispatch:
@@ -39,43 +55,66 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Download extension files from upstream monorepo
+        # Explicit bash: uses pipefail and process substitution.
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           EXT_NAME="${{ steps.meta.outputs.name }}"
-          API_BASE="https://api.github.com/repos/raycast/extensions/contents/extensions/${EXT_NAME}"
+          REPO="raycast/extensions"
+          MANIFEST="$RUNNER_TEMP/synced-files.txt"
+          : > "$MANIFEST"
 
-          # Recursively download all files in the extension directory
-          download_dir() {
-            local api_path="$1"
-            local local_path="$2"
+          # Resolve the extension's OWN subtree, then list it in one recursive
+          # call. An earlier version walked the contents API directory by
+          # directory and issued a request per file — ~85 for a mid-size
+          # extension — which trips secondary rate limits against a repo the
+          # default GITHUB_TOKEN doesn't own. Verified 2026-07-31: karakeep run
+          # 30660911758 failed partway through exactly this walk.
+          COMMIT=$(gh api "repos/${REPO}/commits?path=extensions/${EXT_NAME}&per_page=1" --jq '.[0].sha')
+          [ -n "$COMMIT" ] || { echo "Could not resolve upstream commit"; exit 1; }
+          ROOT_TREE=$(gh api "repos/${REPO}/commits/${COMMIT}" --jq '.commit.tree.sha')
+          EXTS_TREE=$(gh api "repos/${REPO}/git/trees/${ROOT_TREE}" --jq '.tree[] | select(.path=="extensions") | .sha')
+          EXT_TREE=$(gh api "repos/${REPO}/git/trees/${EXTS_TREE}" --jq ".tree[] | select(.path==\"${EXT_NAME}\") | .sha")
+          [ -n "$EXT_TREE" ] || { echo "Extension ${EXT_NAME} not found upstream"; exit 1; }
 
-            items=$(gh api "$api_path" 2>/dev/null) || {
-              echo "Failed to fetch $api_path"
-              exit 1
-            }
+          TREE_JSON=$(gh api "repos/${REPO}/git/trees/${EXT_TREE}?recursive=1")
 
-            echo "$items" | jq -c '.[]' | while read -r item; do
-              type=$(echo "$item" | jq -r '.type')
-              name=$(echo "$item" | jq -r '.name')
-              download_url=$(echo "$item" | jq -r '.download_url // empty')
-              subpath=$(echo "$item" | jq -r '.path' | sed "s|extensions/${EXT_NAME}/||")
-
-              if [ "$type" = "file" ] && [ -n "$download_url" ]; then
-                mkdir -p "$(dirname "$local_path/$name")"
-                curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$download_url" -o "$local_path/$name"
-                # Record what we wrote so the commit step can stage exactly these
-                # paths. Staging the whole tree would sweep in local-only work.
-                printf '%s\n' "${local_path#./}/$name" | sed 's|^/||' >> "$RUNNER_TEMP/synced-files.txt"
-                echo "  downloaded: $subpath/$name"
-              elif [ "$type" = "dir" ]; then
-                mkdir -p "$local_path/$name"
-                download_dir "$api_path/$name" "$local_path/$name"
-              fi
-            done
+          # A truncated tree silently OMITS entries. Those omissions would then
+          # read as "upstream no longer serves this file" and be deleted. The
+          # WHOLE-REPO recursive call DOES truncate on this monorepo — verified
+          # 2026-07-31 — which is why the call is scoped to the extension
+          # subtree. Assert rather than assume; fail closed.
+          [ "$(jq -r '.truncated' <<<"$TREE_JSON")" = "false" ] || {
+            echo "ABORT: upstream tree response was truncated; refusing to sync a partial file list."
+            exit 1
           }
 
-          download_dir "$API_BASE" "."
+          jq -r '.tree[] | select(.type=="blob") | .path' <<<"$TREE_JSON" > "$RUNNER_TEMP/upstream-paths.txt"
+          EXPECTED=$(wc -l < "$RUNNER_TEMP/upstream-paths.txt" | tr -d ' ')
+          echo "upstream serves $EXPECTED files"
+
+          # Fetch contents from raw.githubusercontent (no API quota) pinned to
+          # the resolved commit, so every file comes from ONE consistent
+          # snapshot.
+          while read -r path; do
+            mkdir -p "$(dirname "$path")"
+            curl -fsSL --retry 3 --retry-delay 2 \
+              "https://raw.githubusercontent.com/${REPO}/${COMMIT}/extensions/${EXT_NAME}/${path}" \
+              -o "$path" || { echo "ABORT: failed to download $path"; exit 1; }
+            printf '%s\n' "$path" >> "$MANIFEST"
+            echo "  downloaded: $path"
+          done < "$RUNNER_TEMP/upstream-paths.txt"
+
+          # Every advertised file must have landed. A short manifest is what the
+          # deletion pass would misread as upstream removals.
+          ACTUAL=$(wc -l < "$MANIFEST" | tr -d ' ')
+          [ "$ACTUAL" -eq "$EXPECTED" ] || {
+            echo "ABORT: downloaded $ACTUAL of $EXPECTED files."
+            exit 1
+          }
+          echo "downloaded $ACTUAL/$EXPECTED files"
 
       - name: Commit and push if changed
         # Explicit bash: the deletion loop uses process substitution.
@@ -84,9 +123,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage ONLY the files this run downloaded. `git add -A` would also commit
-          # anything else in the tree — an uncommitted local edit, an untracked
-          # CLAUDE.md, a scratch file — into an automated commit nobody reviews.
+          # Stage ONLY the files this run downloaded. `git add -A` would also
+          # commit anything else in the tree — an uncommitted local edit, an
+          # untracked CLAUDE.md, a scratch file — into an automated commit
+          # nobody reviews.
           MANIFEST="$RUNNER_TEMP/synced-files.txt"
           if [ ! -s "$MANIFEST" ]; then
             echo "No files were downloaded; nothing to stage."
@@ -95,21 +135,34 @@ jobs:
           sort -u "$MANIFEST" -o "$MANIFEST"
           tr '\n' '\0' < "$MANIFEST" | xargs -0 git add --
 
-          # Propagate upstream deletions, but only for files that were ALREADY
-          # tracked and sit under a directory this sync populates. A tracked file
-          # outside those directories (AGENTS.md, CONCEPTS.md, .github/) is
-          # local-only by design and must survive.
-          # Note the process substitution: piping `git ls-files` into the loop would
-          # run it in a subshell, where `git rm` still works but the intent is easy
-          # to break later. Reading from `< <(...)` keeps it in the current shell.
-          SYNCED_ROOTS=$(cut -d/ -f1 "$MANIFEST" | sort -u)
-          while read -r tracked; do
-            if ! grep -Fxq "$tracked" "$MANIFEST"; then
-              echo "  upstream no longer serves: $tracked"
-              git rm -q --cached --ignore-unmatch -- "$tracked"
-              rm -f -- "$tracked"
-            fi
-          done < <(git ls-files -- $SYNCED_ROOTS)
+          # Propagate upstream deletions, but only for files under a directory
+          # this sync populates. A tracked file elsewhere (AGENTS.md, CLAUDE.md,
+          # .github/) is local-only by design and must survive.
+          #
+          # Only DIRECTORIES may contribute. A root-level file's `cut -d/ -f1`
+          # is the file itself, which previously made every root file a deletion
+          # candidate — verified 2026-07-31: karakeep run 30651601868 removed
+          # package.json, tsconfig.json, README.md, AGENTS.md and the workflow
+          # itself while reporting success.
+          SYNCED_DIRS=$(grep '/' "$MANIFEST" | cut -d/ -f1 | sort -u)
+
+          # Refuse to prune on an implausibly small manifest. If the download
+          # partially failed, "upstream no longer serves it" is indistinguishable
+          # from "we failed to fetch it" — and the difference is the whole repo.
+          MANIFEST_COUNT=$(wc -l < "$MANIFEST" | tr -d ' ')
+          if [ "$MANIFEST_COUNT" -lt 10 ]; then
+            echo "Manifest has only $MANIFEST_COUNT files — refusing to propagate deletions."
+          elif [ -z "$SYNCED_DIRS" ]; then
+            echo "No synced subdirectories — nothing to prune."
+          else
+            while read -r tracked; do
+              if ! grep -Fxq "$tracked" "$MANIFEST"; then
+                echo "  upstream no longer serves: $tracked"
+                git rm -q --cached --ignore-unmatch -- "$tracked"
+                rm -f -- "$tracked"
+              fi
+            done < <(git ls-files -- $SYNCED_DIRS)
+          fi
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
