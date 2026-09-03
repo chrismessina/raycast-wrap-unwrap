@@ -1,6 +1,20 @@
+<div align="center">
+
 # Wrap Unwrap
 
-Reflow text to or from wrapped form, with Markdown awareness. Two `no-view` commands you can hotkey-bind:
+[![Raycast Store](https://img.shields.io/badge/Raycast-Store-FF6363?style=flat-square&logo=raycast&logoColor=white)](https://www.raycast.com/chrismessina/wrap-unwrap)
+[![Follow @chrismessina](https://img.shields.io/github/followers/chrismessina?label=Follow%20chrismessina&style=social)](https://github.com/chrismessina)
+[![Stars](https://img.shields.io/github/stars/chrismessina/raycast-wrap-unwrap?style=social)](https://github.com/chrismessina/raycast-wrap-unwrap/stargazers)
+
+**Reflow text to or from wrapped form, with Markdown awareness — without leaving the app you are writing in.**
+
+[Commands](#commands) • [Preferences](#preferences) • [Suggested hotkeys](#suggested-hotkeys) • [For other extensions](#for-other-extensions) • [Acknowledgements](#acknowledgements)
+
+</div>
+
+---
+
+Two `no-view` commands you can hotkey-bind:
 
 - **Wrap Text** — wrap the selected text (or clipboard text) at a configurable column width.
 - **Unwrap Text** — reflow wrapped text into continuous paragraphs, preserving Markdown structure (code fences, lists, blockquotes, tables, links, hyphenation).
