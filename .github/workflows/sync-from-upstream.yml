@@ -30,6 +30,12 @@ name: Sync from upstream
 #   yes                no                  take upstream (stamp, PNGs, fixes)
 #   no                 yes                 KEEP YOURS  ← the README case
 #   yes                yes                 CONFLICT → open an issue, sync nothing
+#   yes                yes                 … except CHANGELOG.md differing ONLY
+#                                          by the {PR_MERGE_DATE} stamp → take
+#                                          upstream (that stamp is the point)
+#   package-lock.json  —                   NOT compared. Derived from
+#                                          package.json; regenerated when
+#                                          package.json is taken.
 #   DELETED upstream   no                  propagate the deletion
 #   DELETED upstream   yes                 KEEP YOURS (it becomes local-only)
 #
@@ -151,6 +157,8 @@ jobs:
           : > "$RUNNER_TEMP/kept-local.txt"
           : > "$RUNNER_TEMP/conflicts.txt"
           : > "$RUNNER_TEMP/ignored.txt"
+          : > "$RUNNER_TEMP/derived.txt"
+          : > "$RUNNER_TEMP/stamped.txt"
 
           while IFS=$'\t' read -r path up_sha; do
             # SKIP paths this mirror deliberately gitignores.
@@ -163,11 +171,44 @@ jobs:
             # 30744504919 (2026-08-02) — and every scheduled run before it, which
             # is why the failure mails arrived daily.
             #
+            # `--no-index` is REQUIRED and is the whole reason this guard works.
+            # By default `git check-ignore` consults the index and reports a
+            # TRACKED file as not-ignored, even when a .gitignore rule matches
+            # it. digger's mirror force-added four files under `.private/`, so
+            # the bare form returns false for exactly the paths this guard
+            # exists to catch — the guard never fires and `git add` still dies.
+            # `--no-index` asks the question we actually mean: does a rule match
+            # this path? That is correct whether or not the file is tracked.
+            #
             # Skipping is the correct resolution, not `git add -f`: the mirror's
             # .gitignore is a deliberate statement that this path does not belong
             # in this repo, and forcing it would commit exactly what was excluded.
             if git check-ignore -q --no-index -- "$path" 2>/dev/null; then
               printf '%s\n' "$path" >> "$RUNNER_TEMP/ignored.txt"
+              continue
+            fi
+
+            # SKIP package-lock.json — it is DERIVED, not authored.
+            #
+            # A blob-SHA compare is the wrong instrument for a generated file.
+            # A standalone mirror legitimately carries devDependencies the
+            # monorepo copy does not (the fleet-wide
+            # @ianvs/prettier-plugin-sort-imports, added 2026-07), so its lock
+            # can NEVER equal upstream's — while upstream's lock keeps moving
+            # under Raycast's dependency bots. Both sides therefore differ from
+            # the baseline on every run, which the table above classifies as a
+            # conflict, and the sync halts forever. Verified 2026-09-17: four
+            # mirrors (bookface, tesla-energy, trimmy, wrap-unwrap) had been
+            # failing daily since 2026-09-15 on exactly this, and no amount of
+            # hand-reconciling would have cleared it — the next bot bump
+            # recreates it.
+            #
+            # Taking upstream's lock is also wrong: it would drop the mirror's
+            # own devDependencies and break `npm ci` here. The lock is a
+            # function of package.json, so it is regenerated from package.json
+            # instead — see the "Regenerate package-lock.json" step below.
+            if [ "$path" = "package-lock.json" ]; then
+              printf '%s\n' "$path" >> "$RUNNER_TEMP/derived.txt"
               continue
             fi
 
@@ -196,6 +237,55 @@ jobs:
                 printf '%s\n' "$path" >> "$RUNNER_TEMP/kept-local.txt"
               fi
             elif [ "$upstream_moved" = true ] && [ "$mirror_moved" = true ]; then
+              # AUTO-RESOLVE the {PR_MERGE_DATE} stamp before calling it a
+              # conflict. Delivering that stamp is half of why this workflow
+              # exists (see the header), yet it presents as a both-sides change:
+              # we wrote the literal placeholder, Raycast CI substituted the
+              # merge date. Upstream's copy is then OUR text with the date
+              # filled in — nobody's work is at risk, and halting on it makes
+              # the sync fail on exactly the event it was built to handle.
+              # Verified 2026-09-17 on raycast-secret-browser-commands, halted
+              # since 2026-09-15 on a CHANGELOG whose only difference was
+              # `{PR_MERGE_DATE}` vs `2026-09-15`.
+              #
+              # The test is line-wise and EXACT, not a date mask. An earlier
+              # draft masked every ISO date in both files and compared the
+              # results, which was far too loose: two sides editing the same
+              # OLD release date differently also compare equal under that
+              # mask, and upstream would silently win. Here a line may differ
+              # only if OUR line carries the placeholder and upstream's line is
+              # that same line with a date where the placeholder is. Every
+              # other line must match byte for byte, and the files must have
+              # the same number of lines.
+              if [ "$path" = "CHANGELOG.md" ] && grep -q '{PR_MERGE_DATE}' "$path"; then
+                # Split out of the `if` chain on purpose. Inside it, a failed
+                # curl is indistinguishable from "not a stamp", and the run
+                # files a manual-reconcile issue for what was really a network
+                # blip. Falling through to CONFLICT is still the right, safe
+                # outcome — but it has to SAY that is what happened.
+                if curl -fsSL --retry 3 --retry-delay 2 \
+                     "https://raw.githubusercontent.com/${REPO}/${COMMIT}/extensions/${EXT_NAME}/${path}" \
+                     -o "$RUNNER_TEMP/upstream-changelog"; then
+                  if awk '
+                    NR==FNR { mine[FNR]=$0; n=FNR; next }
+                    FNR > n { exit 1 }
+                    {
+                      if ($0 == mine[FNR]) next
+                      if (mine[FNR] !~ /\{PR_MERGE_DATE\}/) exit 1
+                      stamped = $0
+                      gsub(/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/, "{PR_MERGE_DATE}", stamped)
+                      if (stamped != mine[FNR]) exit 1
+                    }
+                    END { if (FNR != n) exit 1 }
+                  ' "$path" "$RUNNER_TEMP/upstream-changelog"; then
+                    printf '%s\t%s\n' "$path" "$up_sha" >> "$RUNNER_TEMP/to-update.txt"
+                    printf '%s\n' "$path" >> "$RUNNER_TEMP/stamped.txt"
+                    continue
+                  fi
+                else
+                  echo "  WARNING: could not fetch upstream CHANGELOG.md to test for the {PR_MERGE_DATE} stamp; treating as a conflict."
+                fi
+              fi
               printf '%s\n' "$path" >> "$RUNNER_TEMP/conflicts.txt"
             elif [ "$upstream_moved" = true ]; then
               printf '%s\t%s\n' "$path" "$up_sha" >> "$RUNNER_TEMP/to-update.txt"
@@ -230,6 +320,12 @@ jobs:
             [ -n "$path" ] || continue
             # Still served upstream? Then it was not deleted.
             awk -F'\t' -v p="$path" '$1==p{f=1} END{exit !f}' "$RUNNER_TEMP/upstream.tsv" && continue
+            # Derived, never compared — and so never deleted either. Without
+            # this the baseline (rebuilt verbatim from upstream.tsv, lock
+            # included) would let an upstream lockfile removal `git rm` the
+            # mirror's own regenerated lock, which the compare step is
+            # explicitly not allowed to touch.
+            [ "$path" = "package-lock.json" ] && continue
             # Gitignored here, already gone, or never tracked: nothing to do.
             git check-ignore -q --no-index -- "$path" 2>/dev/null && continue
             [ -f "$path" ] || continue
@@ -265,6 +361,8 @@ jobs:
           echo "take-upstream=$UPD  delete=$DEL  keep-local=$KEPT  conflicts=$CONF  gitignored=$IGN"
           # Say what was dropped. A silent skip reads as "covered everything".
           if [ "$IGN" -gt 0 ]; then echo "skipped (gitignored by this mirror):"; sed 's/^/    /' "$RUNNER_TEMP/ignored.txt"; fi
+          if [ -s "$RUNNER_TEMP/derived.txt" ]; then echo "skipped (derived, regenerated locally):"; sed 's/^/    /' "$RUNNER_TEMP/derived.txt"; fi
+          if [ -s "$RUNNER_TEMP/stamped.txt" ]; then echo "auto-resolved ({PR_MERGE_DATE} stamped upstream):"; sed 's/^/    /' "$RUNNER_TEMP/stamped.txt"; fi
           if [ "$KEPT" -gt 0 ]; then echo "kept (local-only edits, NOT reverted):"; sed 's/^/    /' "$RUNNER_TEMP/kept-local.txt"; fi
           if [ "$CONF" -gt 0 ]; then echo "CONFLICTS (both sides changed):";        sed 's/^/    /' "$RUNNER_TEMP/conflicts.txt"; fi
           if [ "$DEL" -gt 0 ]; then echo "removed (upstream no longer serves):";     sed 's/^/    /' "$RUNNER_TEMP/to-delete.txt"; fi
@@ -326,19 +424,66 @@ jobs:
             echo "  updated: $path"
           done < "$RUNNER_TEMP/to-update.txt"
 
-      # Deliberately UNCONDITIONAL (the conflict step above exits 1, so a halted
-      # run never reaches here).
+      # The lock is excluded from the three-way compare (see the compare step),
+      # so it has to be brought back into agreement with package.json here — and
+      # ONLY when package.json actually moved. `npm install --package-lock-only`
+      # re-resolves from package.json without touching node_modules or running
+      # any package's install scripts, which is the whole job: it keeps this
+      # mirror's own devDependencies AND picks up whatever upstream bumped.
       #
-      # This used to be gated on `updated != 0`, which meant a run that copied
-      # nothing left the baseline frozen — and a run copies nothing precisely
-      # when upstream's change is already present here, which is the common case
-      # right after one of our own PRs merges upstream. The stale baseline then
-      # reports the NEXT upstream change as "both sides changed" and halts the
-      # sync for a conflict that does not exist.
-      #
-      # Verified 2026-08-14: the baseline was still pinned to the 2026-08-03
-      # commit (77 files against upstream's 88) after two "successful" no-op
-      # runs, and the next real contribution halted on three phantom conflicts.
+      # Skipping this would leave `npm ci` broken in the mirror the moment
+      # upstream bumps @raycast/api, which is the common case.
+      - name: Regenerate package-lock.json when package.json changed
+        id: relock
+        if: steps.compare.outputs.updated != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "regenerated=0" >> "$GITHUB_OUTPUT"
+          cut -f1 "$RUNNER_TEMP/to-update.txt" | grep -qx 'package.json' || {
+            echo "package.json unchanged; lock left alone."
+            exit 0
+          }
+          # Must be present AND tracked AND not gitignored. The PR step stages
+          # with a plain `git add`, which refuses an ignored path and exits
+          # non-zero — the same failure mode that wedged raycast-digger daily in
+          # 2026-08. A mirror that deliberately excludes its lock gets told, not
+          # broken.
+          if [ ! -f package-lock.json ]; then
+            echo "No lock in this mirror; nothing to regenerate."; exit 0
+          fi
+          if git check-ignore -q --no-index -- package-lock.json 2>/dev/null ||
+             ! git ls-files --error-unmatch -- package-lock.json >/dev/null 2>&1; then
+            echo "::warning::package-lock.json is untracked or gitignored here; leaving it alone. It may now disagree with package.json."
+            exit 0
+          fi
+
+          BEFORE=$(jq -r '.lockfileVersion' package-lock.json)
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          AFTER=$(jq -r '.lockfileVersion' package-lock.json)
+
+          # `ubuntu-latest` floats, so the npm that runs here floats with it.
+          # An image bump that changes the lockfile format would rewrite the
+          # whole file and present it inside a content PR as if upstream had
+          # done it. Refuse instead: a loud stop is recoverable, a silent
+          # whole-file rewrite reviewed as "sync from upstream" is not.
+          if [ "$BEFORE" != "$AFTER" ]; then
+            git checkout -- package-lock.json
+            echo "::error::npm rewrote lockfileVersion $BEFORE -> $AFTER. Refusing to bury a format migration in a sync PR — regenerate it locally and commit it yourself."
+            exit 1
+          fi
+
+          if git diff --quiet -- package-lock.json; then
+            echo "Lock already consistent with the new package.json."
+            exit 0
+          fi
+          # Deliberately NOT appended to to-update.txt. That file means "taken
+          # from upstream", it is what the PR body lists under that heading, and
+          # its count was already fixed by the compare step. This lock was
+          # GENERATED here; it gets staged and described separately.
+          echo "regenerated=1" >> "$GITHUB_OUTPUT"
+          echo "  regenerated: package-lock.json"
+
       - name: Record the new baseline
         shell: bash
         run: |
@@ -428,6 +573,9 @@ jobs:
           if [ -s "$RUNNER_TEMP/to-delete.txt" ]; then
             tr '\n' '\0' < "$RUNNER_TEMP/to-delete.txt" | xargs -0 git rm -q --
           fi
+          if [ "${{ steps.relock.outputs.regenerated }}" = "1" ]; then
+            git add -- package-lock.json
+          fi
           git add -- "$STATE_FILE"
 
           if git diff --cached --quiet; then
@@ -481,6 +629,11 @@ jobs:
             DEL_NOTE="${DEL_NOTE}${DEL_KEPT}"
           fi
 
+          LOCK_NOTE=""
+          if [ "${{ steps.relock.outputs.regenerated }}" = "1" ]; then
+            LOCK_NOTE=$(printf '\n### Regenerated here (not taken from upstream)\n\n- `package-lock.json` — re-resolved from the new `package.json` with `npm install --package-lock-only`. The mirror lock is never compared against the monorepo copy; it carries devDependencies upstream does not.\n')
+          fi
+
           PR_REF=""
           if [ -n "${{ github.event.client_payload.pr_number }}" ]; then
             PR_REF=$(printf '\nTriggered by raycast/extensions#%s.' "${{ github.event.client_payload.pr_number }}")
@@ -493,7 +646,7 @@ jobs:
             "${{ steps.compare.outputs.updated }}" \
             "$(cut -f1 "$RUNNER_TEMP/to-update.txt" | sed 's/^/- `/; s/$/`/')" \
             "$DEL_NOTE" \
-            "$KEPT_NOTE")
+            "${KEPT_NOTE}${LOCK_NOTE}")
 
           gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
             --title "chore: sync from upstream raycast/extensions" --body "$BODY"
@@ -506,4 +659,3 @@ jobs:
         run: |
           echo "Mirror is up to date with upstream."
           echo "Local-only edits preserved: ${{ steps.compare.outputs.kept }}"
-
