@@ -533,7 +533,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- "$STATE_FILE"; then
+          # status, not diff: on a mirror's first run the state file is untracked,
+          # and `git diff` never sees untracked files.
+          if [ -z "$(git status --porcelain -- "$STATE_FILE")" ]; then
             echo "Baseline already current; nothing to commit."
             exit 0
           fi
