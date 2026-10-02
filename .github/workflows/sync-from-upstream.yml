@@ -1,6 +1,10 @@
 name: Sync from upstream
 
-# TEMPLATE — copy to <mirror>/.github/workflows/sync-from-upstream.yml
+# TEMPLATE — canonical copy lives in raycast-extensions-skills:
+#   plugins/raycast-extensions/templates/sync-from-upstream.yml
+# Install it with scripts/setup-mirror.sh, not by copying a sibling mirror's copy:
+# the script also sets the repo settings the workflow depends on. Fix bugs HERE,
+# then re-run the script in each mirror.
 #
 # Reconciles a standalone mirror against the merged monorepo state, delivering
 # the two things Raycast CI produces ONLY on merge (the stamped {PR_MERGE_DATE}
@@ -33,6 +37,12 @@ name: Sync from upstream
 #   yes                yes                 … except CHANGELOG.md differing ONLY
 #                                          by the {PR_MERGE_DATE} stamp → take
 #                                          upstream (that stamp is the point)
+#   yes                yes                 … except upstream's bytes are a version
+#                                          this mirror already HAD → KEEP YOURS
+#                                          (upstream is behind, not diverged)
+#   yes                yes                 … except a 3-way merge against the
+#                                          baseline has no overlapping hunks →
+#                                          MERGE, delivered in the sync PR
 #   package-lock.json  —                   NOT compared. Derived from
 #                                          package.json; regenerated when
 #                                          package.json is taken.
@@ -40,13 +50,26 @@ name: Sync from upstream
 #   DELETED upstream   yes                 KEEP YOURS (it becomes local-only)
 #
 # Row 3 is what used to lose. Row 4 is genuinely ambiguous and must never be
-# resolved by a script.
+# resolved by a script — and its two exceptions below the stamp row do not
+# resolve it, they show it was never ambiguous. "Upstream is behind" means
+# upstream serves a version this mirror held after the last baseline, so the
+# mirror has already moved past it. A clean merge combines both sides'
+# edits without choosing between them, and still reaches main only through a
+# PR you review. Overlapping hunks still halt.
+#
+# Both exceptions exist because the halts they clear were the common case,
+# not the edge case. Verified 2026-10-01 against five mirrors halted the same
+# day: fathom shipped upstream from the mirror and kept editing (upstream
+# equaled the mirror's own 09-17 commits); at-profile's package.json and
+# history.ts took a Raycast dependency sweep on top of the fleet's import-sort
+# commit, edits that never touched the same lines. A halt also freezes the
+# baseline, so every halt left unreconciled compounds into the next one.
 #
 # The two DELETED rows are computed from the baseline, not from the upstream
 # listing — the listing only says what exists now, so a removed file is
 # invisible to it. See the deletion block in the compare step.
 #
-# STAGGER THE CRON MINUTE per repo. GitHub queues same-minute schedules across
+# STAGGER THE CRON MINUTE per repo (setup-mirror.sh derives it from the repo name). GitHub queues same-minute schedules across
 # all of Actions, and scheduled runs are already best-effort under load.
 
 on:
@@ -159,6 +182,55 @@ jobs:
           : > "$RUNNER_TEMP/ignored.txt"
           : > "$RUNNER_TEMP/derived.txt"
           : > "$RUNNER_TEMP/stamped.txt"
+          : > "$RUNNER_TEMP/behind.txt"
+          : > "$RUNNER_TEMP/merged.txt"
+
+          # True when upstream's bytes for path $1 (blob $2) are a version this
+          # mirror held SINCE the baseline was recorded: some commit after the
+          # state file's last change stored exactly that blob there. Upstream
+          # is then BEHIND, not diverged. The usual cause is shipping from the
+          # mirror and continuing to edit before the next sync records the
+          # merge. Needs full history (fetch-depth: 0).
+          #
+          # Bounded to post-baseline commits on purpose. Searching all history
+          # would read an upstream REVERT, such as Raycast backing out a release,
+          # as "behind", because the reverted-to bytes sit in an older mirror
+          # commit, and the revert would be kept out silently. Bounded, that
+          # revert lands on a pre-baseline blob and halts as a conflict. The
+          # residual misread is a revert to a version first written after the
+          # baseline, which still keeps the mirror's newer copy.
+          BASELINE_COMMIT=$(git log -1 --format=%H -- "$STATE_FILE" 2>/dev/null || true)
+          upstream_is_behind() {
+            local c
+            [ -n "$BASELINE_COMMIT" ] || return 1
+            while IFS= read -r c; do
+              [ "$(git rev-parse -q --verify "$c:$1" 2>/dev/null)" = "$2" ] && return 0
+            done < <(git rev-list "$BASELINE_COMMIT..HEAD" -- "$1")
+            return 1
+          }
+
+          # 3-way merge of path $1: ours = the mirror's copy, base = baseline
+          # blob $2, theirs = upstream blob $3. It succeeds only with zero
+          # overlapping hunks, and for JSON only when the result still parses.
+          # The result is staged under $RUNNER_TEMP/merged/ and written into
+          # the tree by the download step, so it reaches main only through the
+          # sync PR. Any fetch or hash failure returns 1, which means CONFLICT.
+          # A network blip therefore halts the run instead of guessing.
+          try_merge() {
+            local path=$1 base_sha=$2 up_sha=$3 d="$RUNNER_TEMP/merge"
+            mkdir -p "$d"
+            # Both sides by blob SHA, not by path: a raw URL breaks on a path
+            # with a space and would misreport that as a conflict.
+            gh api "repos/${REPO}/git/blobs/${base_sha}" --jq .content | base64 -d > "$d/base" || return 1
+            [ "$(git hash-object "$d/base")" = "$base_sha" ] || return 1
+            gh api "repos/${REPO}/git/blobs/${up_sha}" --jq .content | base64 -d > "$d/up" || return 1
+            [ "$(git hash-object "$d/up")" = "$up_sha" ] || return 1
+            cp "$path" "$d/out"
+            git merge-file -q "$d/out" "$d/base" "$d/up" || return 1
+            case "$path" in *.json) jq empty "$d/out" >/dev/null 2>&1 || return 1 ;; esac
+            mkdir -p "$RUNNER_TEMP/merged/$(dirname "$path")"
+            cp "$d/out" "$RUNNER_TEMP/merged/$path"
+          }
 
           while IFS=$'\t' read -r path up_sha; do
             # SKIP paths this mirror deliberately gitignores.
@@ -286,6 +358,15 @@ jobs:
                   echo "  WARNING: could not fetch upstream CHANGELOG.md to test for the {PR_MERGE_DATE} stamp; treating as a conflict."
                 fi
               fi
+              if upstream_is_behind "$path" "$up_sha"; then
+                printf '%s\n' "$path" >> "$RUNNER_TEMP/kept-local.txt"
+                printf '%s\n' "$path" >> "$RUNNER_TEMP/behind.txt"
+                continue
+              fi
+              if try_merge "$path" "$base_sha" "$up_sha"; then
+                printf '%s\n' "$path" >> "$RUNNER_TEMP/merged.txt"
+                continue
+              fi
               printf '%s\n' "$path" >> "$RUNNER_TEMP/conflicts.txt"
             elif [ "$upstream_moved" = true ]; then
               printf '%s\t%s\n' "$path" "$up_sha" >> "$RUNNER_TEMP/to-update.txt"
@@ -358,18 +439,25 @@ jobs:
           CONF=$(wc -l < "$RUNNER_TEMP/conflicts.txt" | tr -d ' ')
           IGN=$(wc -l < "$RUNNER_TEMP/ignored.txt" | tr -d ' ')
           DELKEPT=$(wc -l < "$RUNNER_TEMP/deleted-upstream-kept.txt" | tr -d ' ')
-          echo "take-upstream=$UPD  delete=$DEL  keep-local=$KEPT  conflicts=$CONF  gitignored=$IGN"
+          MERGED=$(wc -l < "$RUNNER_TEMP/merged.txt" | tr -d ' ')
+          echo "take-upstream=$UPD  merged=$MERGED  delete=$DEL  keep-local=$KEPT  conflicts=$CONF  gitignored=$IGN"
           # Say what was dropped. A silent skip reads as "covered everything".
           if [ "$IGN" -gt 0 ]; then echo "skipped (gitignored by this mirror):"; sed 's/^/    /' "$RUNNER_TEMP/ignored.txt"; fi
           if [ -s "$RUNNER_TEMP/derived.txt" ]; then echo "skipped (derived, regenerated locally):"; sed 's/^/    /' "$RUNNER_TEMP/derived.txt"; fi
           if [ -s "$RUNNER_TEMP/stamped.txt" ]; then echo "auto-resolved ({PR_MERGE_DATE} stamped upstream):"; sed 's/^/    /' "$RUNNER_TEMP/stamped.txt"; fi
           if [ "$KEPT" -gt 0 ]; then echo "kept (local-only edits, NOT reverted):"; sed 's/^/    /' "$RUNNER_TEMP/kept-local.txt"; fi
+          if [ -s "$RUNNER_TEMP/behind.txt" ]; then echo "  of which upstream is BEHIND (serves a version this mirror already had):"; sed 's/^/    /' "$RUNNER_TEMP/behind.txt"; fi
+          if [ "$MERGED" -gt 0 ]; then echo "merged (both sides changed, no overlapping hunks):"; sed 's/^/    /' "$RUNNER_TEMP/merged.txt"; fi
           if [ "$CONF" -gt 0 ]; then echo "CONFLICTS (both sides changed):";        sed 's/^/    /' "$RUNNER_TEMP/conflicts.txt"; fi
           if [ "$DEL" -gt 0 ]; then echo "removed (upstream no longer serves):";     sed 's/^/    /' "$RUNNER_TEMP/to-delete.txt"; fi
           if [ "$DELKEPT" -gt 0 ]; then echo "kept (upstream removed, changed here):"; sed 's/^/    /' "$RUNNER_TEMP/deleted-upstream-kept.txt"; fi
 
+          # `updated` gates every write step, so it counts merged files too;
+          # `taken` and `merged` keep them apart for the PR body.
           {
-            echo "updated=$UPD"
+            echo "updated=$((UPD + MERGED))"
+            echo "taken=$UPD"
+            echo "merged=$MERGED"
             echo "deleted=$DEL"
             echo "kept=$KEPT"
             echo "conflicts=$CONF"
@@ -424,6 +512,13 @@ jobs:
             echo "  updated: $path"
           done < "$RUNNER_TEMP/to-update.txt"
 
+          # Merged files were built and checked in the compare step; place them.
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            cp "$RUNNER_TEMP/merged/$path" "$path"
+            echo "  merged: $path"
+          done < "$RUNNER_TEMP/merged.txt"
+
       # The lock is excluded from the three-way compare (see the compare step),
       # so it has to be brought back into agreement with package.json here — and
       # ONLY when package.json actually moved. `npm install --package-lock-only`
@@ -440,7 +535,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "regenerated=0" >> "$GITHUB_OUTPUT"
-          cut -f1 "$RUNNER_TEMP/to-update.txt" | grep -qx 'package.json' || {
+          cat <(cut -f1 "$RUNNER_TEMP/to-update.txt") "$RUNNER_TEMP/merged.txt" | grep -qx 'package.json' || {
             echo "package.json unchanged; lock left alone."
             exit 0
           }
@@ -484,6 +579,15 @@ jobs:
           echo "regenerated=1" >> "$GITHUB_OUTPUT"
           echo "  regenerated: package-lock.json"
 
+      # UNCONDITIONAL on purpose. Gating this on `updated != '0'` freezes the
+      # baseline, because the runs that copy nothing are the common case — every
+      # run after you adopt upstream's own bytes by hand short-circuits on
+      # byte-equality and copies nothing. The compare then keeps scoring against
+      # a snapshot that stopped tracking the mirror, and the next genuine
+      # upstream-only change reads as "both sides moved" and halts on a phantom
+      # conflict. Diagnosed on raycast-karakeep 2026-08-13 (0369178, ac103cf):
+      # baseline pinned at 2026-08-03, 77 files against upstream's 88, two green
+      # no-op runs, then three phantom conflicts.
       - name: Record the new baseline
         shell: bash
         run: |
@@ -569,6 +673,9 @@ jobs:
           if [ -s "$RUNNER_TEMP/to-update.txt" ]; then
             cut -f1 "$RUNNER_TEMP/to-update.txt" | tr '\n' '\0' | xargs -0 git add --
           fi
+          if [ -s "$RUNNER_TEMP/merged.txt" ]; then
+            tr '\n' '\0' < "$RUNNER_TEMP/merged.txt" | xargs -0 git add --
+          fi
           # Propagate the upstream deletions computed in the compare step. They
           # ride the PR like every other content change — nothing removes a
           # tracked file from main without a review.
@@ -636,18 +743,32 @@ jobs:
             LOCK_NOTE=$(printf '\n### Regenerated here (not taken from upstream)\n\n- `package-lock.json` — re-resolved from the new `package.json` with `npm install --package-lock-only`. The mirror lock is never compared against the monorepo copy; it carries devDependencies upstream does not.\n')
           fi
 
+          MERGED_NOTE=""
+          if [ -s "$RUNNER_TEMP/merged.txt" ]; then
+            MERGED_NOTE=$(printf '\n### Merged: both sides changed (review these closely)\n\nEach file combines this mirror'"'"'s edits with upstream'"'"'s, by a 3-way merge against the last synced baseline. No hunks overlapped, but a clean merge is not proof the result is right:\n\n%s\n' \
+              "$(sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/merged.txt")")
+          fi
+
           PR_REF=""
           if [ -n "${{ github.event.client_payload.pr_number }}" ]; then
             PR_REF=$(printf '\nTriggered by raycast/extensions#%s.' "${{ github.event.client_payload.pr_number }}")
           fi
 
-          BODY=$(printf 'Brings this mirror up to date with the merged monorepo state.\n\nUpstream commit: [`%s`](https://github.com/raycast/extensions/commit/%s)%s\n\n### Files taken from upstream (%s)\n\n%s\n%s%s\n---\n\nOpened automatically. Merging this PR is the only thing that writes to `main` — review the diff and merge when it looks right. If it contains someone else'"'"'s contribution, credit them in `CHANGELOG.md` before merging.\n' \
+          # Only when something was taken: a merge-only PR would otherwise open
+          # with "Files taken from upstream (0)" and read as carrying nothing.
+          TAKEN_NOTE=""
+          if [ -s "$RUNNER_TEMP/to-update.txt" ]; then
+            TAKEN_NOTE=$(printf '\n### Files taken from upstream (%s)\n\n%s\n' \
+              "${{ steps.compare.outputs.taken }}" \
+              "$(cut -f1 "$RUNNER_TEMP/to-update.txt" | sed 's/^/- `/; s/$/`/')")
+          fi
+
+          BODY=$(printf 'Brings this mirror up to date with the merged monorepo state.\n\nUpstream commit: [`%s`](https://github.com/raycast/extensions/commit/%s)%s\n%s%s%s\n---\n\nOpened automatically. Merging this PR is the only thing that writes to `main` — review the diff and merge when it looks right. If it contains someone else'"'"'s contribution, credit them in `CHANGELOG.md` before merging.\n' \
             "${{ steps.compare.outputs.commit }}" \
             "${{ steps.compare.outputs.commit }}" \
             "$PR_REF" \
-            "${{ steps.compare.outputs.updated }}" \
-            "$(cut -f1 "$RUNNER_TEMP/to-update.txt" | sed 's/^/- `/; s/$/`/')" \
-            "$DEL_NOTE" \
+            "$TAKEN_NOTE" \
+            "${MERGED_NOTE}${DEL_NOTE}" \
             "${KEPT_NOTE}${LOCK_NOTE}")
 
           gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
