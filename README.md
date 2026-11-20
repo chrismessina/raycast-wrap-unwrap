@@ -5,7 +5,7 @@
 # Wrap Unwrap
 
 [![Raycast Store](https://img.shields.io/badge/Raycast-Store-FF6363?style=flat-square&logo=raycast&logoColor=white)](https://www.raycast.com/chrismessina/wrap-unwrap)
-[![Licence MIT](https://img.shields.io/badge/Licence-MIT-22C55E?style=flat-square)](LICENSE)
+[![License MIT](https://img.shields.io/badge/License-MIT-22C55E?style=flat-square)](https://github.com/chrismessina/raycast-wrap-unwrap/blob/main/LICENSE)
 [![Follow @chrismessina](https://img.shields.io/github/followers/chrismessina?label=Follow%20chrismessina&style=social)](https://github.com/chrismessina)
 [![Stars](https://img.shields.io/github/stars/chrismessina/raycast-wrap-unwrap?style=social)](https://github.com/chrismessina/raycast-wrap-unwrap/stargazers)
 
@@ -119,7 +119,7 @@ Continuation lines of a list item are indented to clear the marker, gap, and tas
 Lines in a group are joined with a single space, except:
 
 - **Soft hyphens** — a trailing U+00AD is dropped and the halves joined tight (when Strip Soft Hyphens is on). A literal `-` is never removed.
-- **Open inline constructs** — the joiner tracks whether the text so far ends inside an unterminated code span or link destination, honouring backslash escapes, multi-tick fences (`` ``a`b`` ``), and balanced parens inside a URL. A line ending mid-URL is joined tight rather than having a space injected into the destination.
+- **Open inline constructs** — the joiner tracks whether the text so far ends inside an unterminated code span or link destination, honoring backslash escapes, multi-tick fences (`` ``a`b`` ``), and balanced parens inside a URL. A line ending mid-URL is joined tight rather than having a space injected into the destination.
 
 ---
 

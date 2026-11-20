@@ -25,3 +25,5 @@ CLAUDE.md
 
 # Mirror-only contributor guide (see contributing-template.md); keeps it out of the Store PR
 CONTRIBUTING.md
+# Mirror-only until published; raycast/extensions' MIT license covers every extension
+LICENSE
