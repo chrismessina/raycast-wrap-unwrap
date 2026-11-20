@@ -22,3 +22,6 @@ CLAUDE.md
 
 # misc
 .DS_Store
+
+# Mirror-only contributor guide (see contributing-template.md); keeps it out of the Store PR
+CONTRIBUTING.md

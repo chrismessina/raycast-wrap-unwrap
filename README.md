@@ -11,7 +11,7 @@
 
 **Rewrap prose to a column, or flatten hard-wrapped text back into paragraphs — without mangling the Markdown around it.**
 
-[Features](#features) • [Quick Start](#quick-start) • [Usage](#usage) • [How Reflow Works](#how-reflow-works) • [For Other Extensions](#for-other-extensions) • [Development](#development) • [Acknowledgements](#acknowledgements)
+[Features](#features) • [Quick Start](#quick-start) • [Usage](#usage) • [How Reflow Works](#how-reflow-works) • [For Other Extensions](#for-other-extensions) • [Acknowledgements](#acknowledgements)
 
 </div>
 
@@ -159,55 +159,12 @@ Every context field overrides the corresponding user preference for that invocat
 
 ---
 
-## Development
-
-### Project Structure
-
-```
-raycast-wrap-unwrap/
-├── src/
-│   ├── wrap-text.ts       # Wrap Text command entry point
-│   ├── unwrap-text.ts     # Unwrap Text command entry point
-│   └── lib/
-│       ├── classify.ts    # Line → blockquote prefix stack + inner role
-│       ├── wrap.ts        # Greedy fill with block-safe break rejection
-│       ├── unwrap.ts      # Group joining, hyphenation, bullet flattening
-│       ├── inline.ts      # Placeholder protection for atomic inline tokens
-│       ├── regex.ts       # Shared block and inline patterns
-│       └── pipeline.ts    # Input, size guard, delivery, failure toasts
-├── test/                  # node:test suites
-├── test-fixtures/         # 14 Markdown fixtures covering each block role
-├── assets/                # Extension icon (runtime)
-├── media/                 # README images
-└── package.json
-```
-
-### Scripts
-
-| Script | Description |
-| --- | --- |
-| `npm run dev` | Start in development mode with hot reload |
-| `npm run build` | Build for production |
-| `npm run lint` | Run Raycast ESLint config |
-| `npm run fix-lint` | Auto-fix lint issues |
-| `npm test` | Run the `node:test` suites via `tsx` |
-| `npm run publish` | Publish to the Raycast Store |
-
-### Clone & Run
-
-```sh
-git clone https://github.com/chrismessina/raycast-wrap-unwrap.git
-cd raycast-wrap-unwrap
-npm install
-npm run dev
-```
-
----
-
 ## Acknowledgements
 
 The Preferred Source / Primary Action preference pattern follows the popular [Change Case](https://www.raycast.com/erics118/change-case) extension's convention.
 
 ---
+
+Want to contribute? See [CONTRIBUTING.md](https://github.com/chrismessina/raycast-wrap-unwrap/blob/main/CONTRIBUTING.md).
 
 MIT © [Chris Messina](https://github.com/chrismessina)
